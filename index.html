@@ -140,21 +140,21 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
   <div id="tab-occupancy" style="display:none">
     <div class="row g-3 mb-3" id="occ-kpi-row"></div>
     <div class="row g-3">
-      <div class="col-lg-6"><div class="chart-card">
+      <div class="col-lg-4"><div class="chart-card">
         <div class="section-title">Boarding — Check-ins Per Day</div>
-        <canvas id="chartBoarding" height="220"></canvas>
+        <canvas id="chartBoarding" height="260"></canvas>
       </div></div>
-      <div class="col-lg-6"><div class="chart-card">
+      <div class="col-lg-4"><div class="chart-card">
         <div class="section-title">Daycare — Dogs Per Day</div>
-        <canvas id="chartDaycare" height="220"></canvas>
+        <canvas id="chartDaycare" height="260"></canvas>
       </div></div>
-      <div class="col-lg-6"><div class="chart-card">
+      <div class="col-lg-4"><div class="chart-card">
         <div class="section-title">Grooming — Appointments Per Day</div>
-        <canvas id="chartGrooming" height="220"></canvas>
+        <canvas id="chartGrooming" height="260"></canvas>
       </div></div>
-      <div class="col-lg-6"><div class="chart-card">
-        <div class="section-title">Day-of-Week Patterns</div>
-        <canvas id="chartDow" height="220"></canvas>
+      <div class="col-12"><div class="chart-card">
+        <div class="section-title">Day-of-Week Patterns — by Service &amp; Location</div>
+        <canvas id="chartDow" height="160"></canvas>
       </div></div>
     </div>
   </div>
@@ -390,70 +390,35 @@ function buildRevKpis() {
 
 function buildRevTimeChart() {
   const {start,end} = periodDates(STATE.period);
-  const locs = activeLocs();
-  const multiLoc = locs.length > 1;
   const gran = STATE.revGran;
   const keyFn = gran==='week' ? weekKey : monthKey;
-
   const payments = paymentsInPeriod(start,end);
+  const types = ['Boarding','Daycare','Grooming','Other'];
+  const colors = {Boarding:'#e76f51',Daycare:'#f4a261',Grooming:'#457b9d',Other:'#adb5bd'};
+
+  const buckets = {};
+  payments.forEach(p=>{
+    if(!p.date) return;
+    const k=keyFn(p.date);
+    if(!buckets[k]) buckets[k]={Boarding:0,Daycare:0,Grooming:0,Other:0};
+    buckets[k][careType(p)]+=p.amount;
+  });
+  const labels=Object.keys(buckets).sort();
+  const totals=labels.map(k=>types.reduce((s,t)=>s+buckets[k][t],0));
+
+  const datasets = types.map(t=>({
+    label:t, data:labels.map(k=>buckets[k][t]||0),
+    backgroundColor:colors[t], stack:'s',
+  }));
+  datasets.push(trendDataset(totals,'#374151','Total trend'));
+
   destroyChart('chartRevTime');
-
-  if(multiLoc) {
-    // Line per location
-    const buckets = {};
-    locs.forEach(loc => { buckets[loc]={}; });
-    payments.forEach(p => {
-      if(!p.date||!buckets[p.location]) return;
-      const k=keyFn(p.date);
-      buckets[p.location][k]=(buckets[p.location][k]||0)+p.amount;
-    });
-    const labels = [...new Set(Object.values(buckets).flatMap(b=>Object.keys(b)))].sort();
-    const datasets = locs.map(loc => {
-      const data = labels.map(k=>buckets[loc][k]||0);
-      return {
-        label:loc, data,
-        borderColor:locColor(loc), backgroundColor:locBg(loc),
-        tension:.35, fill:false, pointRadius:3,
-      };
-    });
-    // Add trend per location
-    locs.forEach((loc,i) => {
-      const data = labels.map(k=>buckets[loc][k]||0);
-      datasets.push(trendDataset(data, locColor(loc)+'99', loc+' trend'));
-    });
-
-    CHARTS.chartRevTime = new Chart(document.getElementById('chartRevTime'),{
-      type:'line', data:{labels,datasets},
-      options:{responsive:true,plugins:{legend:{position:'bottom'},datalabels:{display:false}},
-        scales:{y:{ticks:{callback:v=>fmt$(v)}}}}
-    });
-  } else {
-    // Stacked bar by service type
-    const types = ['Boarding','Daycare','Grooming','Other'];
-    const colors = {Boarding:'#e76f51',Daycare:'#f4a261',Grooming:'#457b9d',Other:'#adb5bd'};
-    const buckets = {};
-    payments.forEach(p=>{
-      if(!p.date) return;
-      const k=keyFn(p.date);
-      if(!buckets[k]) buckets[k]={Boarding:0,Daycare:0,Grooming:0,Other:0};
-      buckets[k][careType(p)]+=p.amount;
-    });
-    const labels=Object.keys(buckets).sort();
-    const totals=labels.map(k=>types.reduce((s,t)=>s+buckets[k][t],0));
-
-    const datasets = types.map(t=>({
-      label:t, data:labels.map(k=>buckets[k][t]||0),
-      backgroundColor:colors[t], stack:'s',
-      plugins:{datalabels:{display:false}}
-    }));
-    datasets.push(trendDataset(totals, '#374151', 'Total trend'));
-
-    CHARTS.chartRevTime = new Chart(document.getElementById('chartRevTime'),{
-      type:'bar', data:{labels,datasets},
-      options:{responsive:true,plugins:{legend:{position:'bottom'},datalabels:{display:false}},
-        scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:v=>fmt$(v)}}}}
-    });
-  }
+  CHARTS.chartRevTime = new Chart(document.getElementById('chartRevTime'),{
+    type:'bar', data:{labels,datasets},
+    options:{responsive:true,
+      plugins:{legend:{position:'bottom'},datalabels:{display:false}},
+      scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:v=>fmt$(v)}}}}
+  });
 }
 
 function buildRevTypeChart() {
@@ -568,9 +533,9 @@ function buildOccCharts() {
   const locs = activeLocs();
   const multiLoc = locs.length > 1;
 
+  // Date labels — cap at 120 points for readability
   const spanDays = Math.round((end-start)/(1000*86400));
-  const maxLabels = 120;
-  const step = Math.ceil(spanDays/maxLabels);
+  const step = Math.ceil(spanDays/120);
   const dateLabels=[];
   for(let i=spanDays;i>=0;i-=step){
     const x=new Date(end); x.setDate(x.getDate()-i);
@@ -583,93 +548,117 @@ function buildOccCharts() {
     return m;
   }
 
-  function mkChart(id, label, records, dateField, valField, color) {
+  // Clustered column chart: one bar-dataset per location, one trend-line per location
+  function mkClusteredChart(id, label, records, dateField, valField, singleColor) {
     destroyChart(id);
+    const datasets = [];
+
     if(multiLoc) {
-      // Multi-location line chart
-      const datasets = [];
       locs.forEach(loc => {
-        const locRecs = records.filter(r=>r.location===loc);
-        const dm = makeDayMap(locRecs, dateField, valField);
+        const dm = makeDayMap(records.filter(r=>r.location===loc), dateField, valField);
         const data = dateLabels.map(k=>dm[k]||0);
         datasets.push({
-          label:loc, data,
-          borderColor:locColor(loc), backgroundColor:locBg(loc,.15),
-          tension:.3, fill:true, pointRadius:0, borderWidth:2
+          label: loc,
+          data,
+          backgroundColor: locColor(loc)+'99',
+          borderColor: locColor(loc),
+          borderWidth: 1,
+          // no stack property → clustered (grouped) bars
         });
         datasets.push(trendDataset(data, locColor(loc), loc+' trend'));
-      });
-      CHARTS[id] = new Chart(document.getElementById(id),{
-        type:'line', data:{labels:dateLabels,datasets},
-        options:{responsive:true,plugins:{legend:{position:'bottom'},datalabels:{display:false}},
-          scales:{x:{ticks:{maxTicksLimit:8}},y:{beginAtZero:true}}}
       });
     } else {
       const dm = makeDayMap(records, dateField, valField);
       const data = dateLabels.map(k=>dm[k]||0);
-      CHARTS[id] = new Chart(document.getElementById(id),{
-        type:'bar',
-        data:{labels:dateLabels,datasets:[
-          {label,data,backgroundColor:color+'88',borderColor:color,borderWidth:1},
-          trendDataset(data,color)
-        ]},
-        options:{responsive:true,
-          plugins:{legend:{display:false},
-            datalabels:{
-              display: ctx => ctx.dataset.type !== 'line' && ctx.parsed.y > 0,
-              anchor:'end',align:'top',
-              formatter:v=>v>0?v:'',
-              font:{size:9},color:'#374151'
-            }
-          },
-          scales:{x:{ticks:{maxTicksLimit:10}},y:{beginAtZero:true,ticks:{stepSize:1}}}
-        }
-      });
+      datasets.push({label, data, backgroundColor:singleColor+'88', borderColor:singleColor, borderWidth:1});
+      datasets.push(trendDataset(data, singleColor));
     }
+
+    CHARTS[id] = new Chart(document.getElementById(id),{
+      type:'bar', data:{labels:dateLabels, datasets},
+      options:{responsive:true,
+        plugins:{
+          legend:{display:multiLoc, position:'bottom'},
+          datalabels:{
+            display: ctx => ctx.dataset.type!=='line' && ctx.parsed.y>0 && !multiLoc,
+            anchor:'end', align:'top',
+            formatter: v => v>0 ? v : '',
+            font:{size:9}, color:'#374151'
+          }
+        },
+        scales:{x:{ticks:{maxTicksLimit:10}}, y:{beginAtZero:true, ticks:{stepSize:1}}}
+      }
+    });
   }
 
   const b = filterLoc(RAW.boarding).filter(r=>inRange(r.start_date,start,end));
   const d = filterLoc(RAW.daycare).filter(r=>inRange(r.date,start,end));
   const g = filterLoc(RAW.grooming).filter(r=>inRange(r.date,start,end));
 
-  mkChart('chartBoarding','Check-ins',b,'start_date','num_pets','#e76f51');
-  mkChart('chartDaycare','Dogs',d,'date','num_pets','#f4a261');
-  mkChart('chartGrooming','Appointments',g,'date','num_pets','#457b9d');
+  mkClusteredChart('chartBoarding','Check-ins',    b,'start_date','num_pets','#e76f51');
+  mkClusteredChart('chartDaycare', 'Dogs',         d,'date',      'num_pets','#f4a261');
+  mkClusteredChart('chartGrooming','Appointments', g,'date',      'num_pets','#457b9d');
 
-  // Day-of-week
+  // ── Day-of-Week chart: stacked by service, clustered by location ──────────
   const dowLabels=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const svcDef = [
+    {key:'Daycare',  records:d, dateField:'date',       valFn:r=>r.num_pets, color:'#f4a261'},
+    {key:'Grooming', records:g, dateField:'date',       valFn:()=>1,         color:'#457b9d'},
+    {key:'Boarding', records:b, dateField:'start_date', valFn:()=>1,         color:'#e76f51'},
+  ];
+
   destroyChart('chartDow');
+  const dowDatasets = [];
+
   if(multiLoc) {
-    const datasets=[];
-    locs.forEach(loc=>{
-      const dowD=Array(7).fill(0),dowG=Array(7).fill(0),dowB=Array(7).fill(0);
-      d.filter(r=>r.location===loc).forEach(r=>{ if(r.date) dowD[parseDate(r.date).getDay()]+=r.num_pets; });
-      g.filter(r=>r.location===loc).forEach(r=>{ if(r.date) dowG[parseDate(r.date).getDay()]+=1; });
-      b.filter(r=>r.location===loc).forEach(r=>{ if(r.start_date) dowB[parseDate(r.start_date).getDay()]+=1; });
-      const total=dowD.map((v,i)=>v+dowG[i]+dowB[i]);
-      datasets.push({label:loc,data:total,backgroundColor:locColor(loc)+'aa',borderColor:locColor(loc),borderWidth:1});
+    // Each location gets its own stack; within that stack, services are stacked
+    locs.forEach((loc, li) => {
+      svcDef.forEach(svc => {
+        const counts = Array(7).fill(0);
+        svc.records.filter(r=>r.location===loc).forEach(r=>{
+          const df=r[svc.dateField]; if(df) counts[parseDate(df).getDay()]+=svc.valFn(r);
+        });
+        // Lighter shade for the second location so FWB vs NVL is distinct
+        const alpha = li===0 ? 'cc' : '55';
+        dowDatasets.push({
+          label: `${loc.replace('Fort Walton Beach','FWB')} — ${svc.key}`,
+          data: counts,
+          backgroundColor: svc.color+alpha,
+          borderColor: svc.color,
+          borderWidth: li===0 ? 0 : 1,
+          stack: loc,   // same stack per location → stacked within, clustered between
+        });
+      });
     });
-    CHARTS.chartDow=new Chart(document.getElementById('chartDow'),{
-      type:'bar',data:{labels:dowLabels,datasets},
-      options:{responsive:true,plugins:{legend:{position:'bottom'},
-        datalabels:{display:true,anchor:'end',align:'top',formatter:v=>v>0?v:'',font:{size:9},color:'#374151'}},
-        scales:{y:{beginAtZero:true}}}
+    CHARTS.chartDow = new Chart(document.getElementById('chartDow'),{
+      type:'bar', data:{labels:dowLabels, datasets:dowDatasets},
+      options:{responsive:true,
+        plugins:{
+          legend:{position:'bottom', labels:{boxWidth:12, font:{size:10}}},
+          datalabels:{display:false}
+        },
+        scales:{x:{stacked:true}, y:{stacked:true, beginAtZero:true}}
+      }
     });
   } else {
-    const dowD=Array(7).fill(0),dowG=Array(7).fill(0),dowB=Array(7).fill(0);
-    d.forEach(r=>{ if(r.date) dowD[parseDate(r.date).getDay()]+=r.num_pets; });
-    g.forEach(r=>{ if(r.date) dowG[parseDate(r.date).getDay()]+=1; });
-    b.forEach(r=>{ if(r.start_date) dowB[parseDate(r.start_date).getDay()]+=1; });
-    CHARTS.chartDow=new Chart(document.getElementById('chartDow'),{
-      type:'bar',
-      data:{labels:dowLabels,datasets:[
-        {label:'Daycare',data:dowD,backgroundColor:'#f4a261aa',stack:'s'},
-        {label:'Grooming',data:dowG,backgroundColor:'#457b9daa',stack:'s'},
-        {label:'Boarding check-ins',data:dowB,backgroundColor:'#e76f51aa',stack:'s'},
-      ]},
-      options:{responsive:true,plugins:{legend:{position:'bottom'},
-        datalabels:{display:ctx=>ctx.parsed.y>0,formatter:v=>v>0?v:'',font:{size:9},color:'#fff',anchor:'center',align:'center'}},
-        scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true}}}
+    svcDef.forEach(svc=>{
+      const counts=Array(7).fill(0);
+      svc.records.forEach(r=>{ const df=r[svc.dateField]; if(df) counts[parseDate(df).getDay()]+=svc.valFn(r); });
+      dowDatasets.push({label:svc.key, data:counts, backgroundColor:svc.color+'aa', stack:'s'});
+    });
+    CHARTS.chartDow = new Chart(document.getElementById('chartDow'),{
+      type:'bar', data:{labels:dowLabels, datasets:dowDatasets},
+      options:{responsive:true,
+        plugins:{
+          legend:{position:'bottom'},
+          datalabels:{
+            display: ctx=>ctx.parsed.y>0,
+            formatter: v=>v>0?v:'',
+            font:{size:9}, color:'#fff', anchor:'center', align:'center'
+          }
+        },
+        scales:{x:{stacked:true}, y:{stacked:true, beginAtZero:true}}
+      }
     });
   }
 }
