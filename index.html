@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Primo Dog — Business Dashboard</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --paw:#2d6a4f;--paw-light:#52b788;--paw-bg:#f0faf4;
+  --accent:#e76f51;--accent2:#457b9d;--accent3:#f4a261;
+  --card-radius:12px;
+}
+body{background:#f5f7fa;font-family:'Segoe UI',system-ui,sans-serif;font-size:.92rem;}
+.navbar{background:var(--paw)!important;}
+.navbar-brand{font-weight:700;font-size:1.2rem;letter-spacing:.03em;}
+.badge-loc{background:var(--paw-light);font-size:.75rem;}
+
+/* Controls bar */
+#controls{background:#fff;border-bottom:1px solid #e2e8f0;padding:.6rem 1rem;position:sticky;top:56px;z-index:100;}
+.btn-period{border:1px solid #d1d5db;background:#fff;padding:.2rem .65rem;border-radius:6px;font-size:.82rem;cursor:pointer;transition:all .15s;}
+.btn-period.active{background:var(--paw);color:#fff;border-color:var(--paw);}
+.loc-btn{border:1px solid #d1d5db;background:#fff;padding:.2rem .75rem;border-radius:6px;font-size:.82rem;cursor:pointer;}
+.loc-btn.active{background:var(--accent2);color:#fff;border-color:var(--accent2);}
+
+/* KPI cards */
+.kpi-card{background:#fff;border-radius:var(--card-radius);padding:1rem 1.25rem;border:1px solid #e9ecef;height:100%;}
+.kpi-label{font-size:.75rem;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem;}
+.kpi-value{font-size:1.7rem;font-weight:700;color:#1a202c;line-height:1.1;}
+.kpi-sub{font-size:.78rem;margin-top:.3rem;}
+.up{color:#16a34a;}.down{color:#dc2626;}.flat{color:#6b7280;}
+.kpi-bar{height:3px;border-radius:2px;margin-top:.6rem;}
+
+/* Section headers */
+.section-title{font-weight:600;font-size:.85rem;color:#374151;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.75rem;}
+
+/* Chart cards */
+.chart-card{background:#fff;border-radius:var(--card-radius);padding:1.25rem;border:1px solid #e9ecef;}
+
+/* Tables */
+.dash-table th{font-size:.78rem;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid #e5e7eb!important;}
+.dash-table td{font-size:.85rem;vertical-align:middle;}
+.dash-table tr:hover td{background:#f9fafb;}
+.risk-badge{background:#fff3cd;color:#856404;border:1px solid #ffc107;font-size:.72rem;padding:.1rem .45rem;border-radius:4px;}
+.top-badge{background:#d1fae5;color:#065f46;border:1px solid #6ee7b7;font-size:.72rem;padding:.1rem .45rem;border-radius:4px;}
+
+/* Nav tabs */
+.nav-tabs .nav-link{font-size:.85rem;color:#4b5563;}
+.nav-tabs .nav-link.active{color:var(--paw);border-bottom-color:var(--paw);font-weight:600;}
+
+/* Loading overlay */
+#loading{position:fixed;inset:0;background:rgba(255,255,255,.92);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1rem;}
+.spinner{width:40px;height:40px;border:4px solid #e5e7eb;border-top-color:var(--paw);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Forecast section */
+.forecast-note{font-size:.78rem;color:#6b7280;font-style:italic;}
+
+.trend-chip{display:inline-flex;align-items:center;gap:.25rem;font-size:.75rem;padding:.15rem .5rem;border-radius:20px;font-weight:600;}
+.trend-up{background:#dcfce7;color:#15803d;}
+.trend-dn{background:#fee2e2;color:#b91c1c;}
+.trend-fl{background:#f1f5f9;color:#475569;}
+
+#generated-note{font-size:.72rem;color:#9ca3af;}
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading">
+  <div class="spinner"></div>
+  <div style="color:#374151;font-weight:500">Loading dashboard data…</div>
+</div>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark sticky-top">
+  <div class="container-fluid px-3">
+    <span class="navbar-brand">🐾 Primo Dog</span>
+    <span id="generated-note"></span>
+  </div>
+</nav>
+
+<!-- Controls -->
+<div id="controls" class="d-flex flex-wrap align-items-center gap-2">
+  <div class="d-flex gap-1 flex-wrap" id="period-btns">
+    <button class="btn-period" data-p="7">Last 7 days</button>
+    <button class="btn-period active" data-p="30">Last 30 days</button>
+    <button class="btn-period" data-p="90">Last 90 days</button>
+    <button class="btn-period" data-p="ytd">YTD</button>
+    <button class="btn-period" data-p="365">Last 12 mo</button>
+    <button class="btn-period" data-p="all">All time</button>
+  </div>
+  <div class="vr mx-1"></div>
+  <div class="d-flex gap-1" id="loc-btns">
+    <button class="loc-btn active" data-loc="All">All locations</button>
+    <button class="loc-btn" data-loc="Fort Walton Beach">Fort Walton Beach</button>
+    <button class="loc-btn" data-loc="Niceville">Niceville</button>
+  </div>
+</div>
+
+<!-- Main content -->
+<div class="container-fluid px-3 py-3">
+
+  <!-- TABS -->
+  <ul class="nav nav-tabs mb-3" id="mainTabs">
+    <li class="nav-item"><button class="nav-link active" data-tab="revenue">Revenue</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="occupancy">Occupancy</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="customers">Customers</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="forecast">Forecast</button></li>
+  </ul>
+
+  <!-- ── REVENUE TAB ── -->
+  <div id="tab-revenue">
+    <!-- KPI row -->
+    <div class="row g-3 mb-3" id="kpi-row"></div>
+
+    <div class="row g-3">
+      <!-- Revenue over time -->
+      <div class="col-lg-8">
+        <div class="chart-card">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="section-title mb-0">Revenue Over Time</div>
+            <select id="rev-granularity" class="form-select form-select-sm" style="width:auto">
+              <option value="week">By Week</option>
+              <option value="month" selected>By Month</option>
+            </select>
+          </div>
+          <canvas id="chartRevTime" height="200"></canvas>
+        </div>
+      </div>
+      <!-- Revenue by type -->
+      <div class="col-lg-4">
+        <div class="chart-card h-100">
+          <div class="section-title">Revenue by Service Type</div>
+          <canvas id="chartRevType" height="200"></canvas>
+        </div>
+      </div>
+
+      <!-- Period comparison table -->
+      <div class="col-12">
+        <div class="chart-card">
+          <div class="section-title">Period Comparison</div>
+          <div class="table-responsive">
+            <table class="table dash-table" id="tbl-comparison">
+              <thead><tr>
+                <th>Service</th><th>Location</th>
+                <th class="text-end">Current Period</th>
+                <th class="text-end">Prior Period</th>
+                <th class="text-end">Change</th>
+                <th class="text-end">% Change</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── OCCUPANCY TAB ── -->
+  <div id="tab-occupancy" style="display:none">
+    <div class="row g-3 mb-3" id="occ-kpi-row"></div>
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="chart-card">
+          <div class="section-title">Boarding — Dogs Present Per Day</div>
+          <canvas id="chartBoarding" height="220"></canvas>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="chart-card">
+          <div class="section-title">Daycare — Check-ins Per Day</div>
+          <canvas id="chartDaycare" height="220"></canvas>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="chart-card">
+          <div class="section-title">Grooming — Appointments Per Day</div>
+          <canvas id="chartGrooming" height="220"></canvas>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="chart-card">
+          <div class="section-title">Day-of-Week Patterns</div>
+          <canvas id="chartDow" height="220"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CUSTOMERS TAB ── -->
+  <div id="tab-customers" style="display:none">
+    <div class="row g-3">
+      <!-- Top spenders -->
+      <div class="col-lg-7">
+        <div class="chart-card">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="section-title mb-0">Top Customers by Spend</div>
+            <select id="cust-service-filter" class="form-select form-select-sm" style="width:auto">
+              <option value="all">All services</option>
+              <option value="boarding">Boarding</option>
+              <option value="daycare">Daycare</option>
+              <option value="grooming">Grooming</option>
+            </select>
+          </div>
+          <div class="table-responsive" style="max-height:400px;overflow-y:auto">
+            <table class="table dash-table" id="tbl-top-customers">
+              <thead><tr>
+                <th>#</th><th>Customer</th><th>Location(s)</th>
+                <th class="text-end">Visits</th>
+                <th class="text-end">Total Spend</th>
+                <th class="text-end">Avg/Visit</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- At-risk customers -->
+      <div class="col-lg-5">
+        <div class="chart-card">
+          <div class="section-title">⚠️ At-Risk Customers</div>
+          <p class="text-muted" style="font-size:.8rem">Customers with a significant drop in visit frequency compared to their typical pattern.</p>
+          <div id="at-risk-list" style="max-height:370px;overflow-y:auto"></div>
+        </div>
+      </div>
+
+      <!-- Customer history -->
+      <div class="col-12">
+        <div class="chart-card">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="section-title mb-0">Customer History</div>
+            <input type="text" id="cust-search" class="form-control form-control-sm" placeholder="Search by name…" style="max-width:240px">
+          </div>
+          <div id="cust-detail" class="text-muted" style="font-size:.85rem">Search for a customer above to see their history.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FORECAST TAB ── -->
+  <div id="tab-forecast" style="display:none">
+    <div class="row g-3 mb-3" id="forecast-kpi-row"></div>
+    <div class="row g-3">
+      <div class="col-lg-8">
+        <div class="chart-card">
+          <div class="section-title">Revenue Forecast — Next 8 Weeks</div>
+          <canvas id="chartForecast" height="220"></canvas>
+          <p class="forecast-note mt-2">Based on a linear trend over the last 12 weeks of actuals. Use for planning only.</p>
+        </div>
+      </div>
+      <div class="col-lg-4">
+        <div class="chart-card h-100">
+          <div class="section-title">Projected Weekly Revenue</div>
+          <div id="forecast-breakdown"></div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="chart-card">
+          <div class="section-title">Daycare Occupancy Forecast — Next 8 Weeks</div>
+          <canvas id="chartForecastOcc" height="160"></canvas>
+          <p class="forecast-note mt-2">Projected daily check-ins based on recent weekly averages.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// DATA LAYER
+// ═══════════════════════════════════════════════════════════════
+let RAW = null;
+let STATE = { period: 30, location: 'All', tab: 'revenue', revGranularity: 'month', custService: 'all' };
+const CHARTS = {};
+
+async function loadData() {
+  try {
+    const r = await fetch('dashboard_data.json');
+    if (!r.ok) throw new Error('Not found');
+    RAW = await r.json();
+  } catch(e) {
+    document.getElementById('loading').innerHTML =
+      `<div class="text-center p-4">
+        <div style="font-size:2rem">⚠️</div>
+        <div class="fw-bold mt-2">dashboard_data.json not found</div>
+        <div class="text-muted mt-1" style="font-size:.85rem">Run <code>export_data.py</code> then place<br><code>dashboard_data.json</code> in the same folder as this file.</div>
+      </div>`;
+    return false;
+  }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DATE HELPERS
+// ═══════════════════════════════════════════════════════════════
+const today = () => new Date(); // use real today
+
+function periodDates(p) {
+  const now = today();
+  const d = (n) => { const x=new Date(now); x.setDate(x.getDate()-n); return x; };
+  const yd = (y,m,day) => new Date(y,m,day);
+  if (p === 'ytd')  return { start: new Date(now.getFullYear(),0,1), end: now, priorStart: new Date(now.getFullYear()-1,0,1), priorEnd: new Date(now.getFullYear()-1, now.getMonth(), now.getDate()) };
+  if (p === '365')  return { start: d(365), end: now, priorStart: d(730), priorEnd: d(365) };
+  if (p === 'all')  return { start: new Date('2020-01-01'), end: now, priorStart: new Date('2020-01-01'), priorEnd: now };
+  const n = parseInt(p);
+  return { start: d(n), end: now, priorStart: d(n*2), priorEnd: d(n) };
+}
+
+const iso = d => d ? d.substring(0,10) : null;
+const parseDate = s => s ? new Date(s + 'T00:00:00') : null;
+const fmt$ = n => '$' + n.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0});
+const fmt$d = n => '$' + n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtPct = n => (n>=0?'+':'')+n.toFixed(1)+'%';
+
+function inRange(dateStr, start, end) {
+  const d = parseDate(dateStr);
+  return d && d >= start && d <= end;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FILTERING HELPERS
+// ═══════════════════════════════════════════════════════════════
+function filterByLoc(arr, locField='location') {
+  if (STATE.location === 'All') return arr;
+  return arr.filter(r => r[locField] === STATE.location);
+}
+
+function paymentsInPeriod(start, end) {
+  return filterByLoc(RAW.payments).filter(r =>
+    r.transaction_type === 'Sale' && inRange(r.date, start, end));
+}
+
+function boardingInPeriod(start, end) {
+  return filterByLoc(RAW.boarding).filter(r => inRange(r.start_date, start, end));
+}
+
+function daycareInPeriod(start, end) {
+  return filterByLoc(RAW.daycare).filter(r => inRange(r.date, start, end));
+}
+
+function groomingInPeriod(start, end) {
+  return filterByLoc(RAW.grooming).filter(r => inRange(r.date, start, end));
+}
+
+// Sum payment amounts by primary care type
+function revByType(payments) {
+  const m = {Boarding:0, Daycare:0, Grooming:0, Other:0};
+  payments.forEach(p => {
+    const ct = (p.care_type||'').toLowerCase();
+    if (ct.includes('boarding')) m.Boarding += p.amount;
+    else if (ct.includes('daycare')) m.Daycare += p.amount;
+    else if (ct.includes('grooming')) m.Grooming += p.amount;
+    else m.Other += p.amount;
+  });
+  return m;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// KPI CARDS
+// ═══════════════════════════════════════════════════════════════
+function buildKpiRow() {
+  const { start, end, priorStart, priorEnd } = periodDates(STATE.period);
+  const cur  = paymentsInPeriod(start, end);
+  const prev = paymentsInPeriod(priorStart, priorEnd);
+
+  const curRev  = cur.reduce((s,p)=>s+p.amount,0);
+  const prevRev = prev.reduce((s,p)=>s+p.amount,0);
+  const curTypes  = revByType(cur);
+  const prevTypes = revByType(prev);
+
+  const kpis = [
+    { label:'Total Revenue', val:curRev, prev:prevRev, color:'#2d6a4f' },
+    { label:'Grooming Revenue', val:curTypes.Grooming, prev:prevTypes.Grooming, color:'#457b9d' },
+    { label:'Boarding Revenue', val:curTypes.Boarding, prev:prevTypes.Boarding, color:'#e76f51' },
+    { label:'Daycare Revenue', val:curTypes.Daycare, prev:prevTypes.Daycare, color:'#f4a261' },
+  ];
+
+  const row = document.getElementById('kpi-row');
+  row.innerHTML = kpis.map(k => {
+    const chg = k.prev > 0 ? ((k.val - k.prev)/k.prev*100) : 0;
+    const cls = chg>1?'up':chg<-1?'down':'flat';
+    const arrow = chg>1?'▲':chg<-1?'▼':'—';
+    const pctPrior = k.val+k.prev > 0 ? (k.val/(k.val+k.prev)*100) : 0;
+    return `<div class="col-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-label">${k.label}</div>
+        <div class="kpi-value">${fmt$(k.val)}</div>
+        <div class="kpi-sub ${cls}">${arrow} ${fmtPct(chg)} vs prior period</div>
+        <div class="kpi-sub text-muted">Prior: ${fmt$(k.prev)}</div>
+        <div class="kpi-bar" style="background:#e5e7eb">
+          <div style="height:100%;width:${Math.min(100,pctPrior)}%;background:${k.color};border-radius:2px"></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REVENUE OVER TIME CHART
+// ═══════════════════════════════════════════════════════════════
+function weekKey(d)  { const x=new Date(d); x.setDate(x.getDate()-x.getDay()); return x.toISOString().substring(0,10); }
+function monthKey(d) { return d.substring(0,7); }
+
+function buildRevTimeChart() {
+  const { start, end } = periodDates(STATE.period);
+  const payments = paymentsInPeriod(start, end);
+  const gran = STATE.revGranularity;
+  const keyFn = gran==='week' ? (d=>weekKey(d)) : (d=>monthKey(d));
+
+  // bucket by period + type
+  const buckets = {};
+  payments.forEach(p => {
+    if (!p.date) return;
+    const k = keyFn(p.date);
+    if (!buckets[k]) buckets[k] = {Boarding:0,Daycare:0,Grooming:0,Other:0};
+    const ct=(p.care_type||'').toLowerCase();
+    if      (ct.includes('boarding')) buckets[k].Boarding += p.amount;
+    else if (ct.includes('daycare'))  buckets[k].Daycare  += p.amount;
+    else if (ct.includes('grooming')) buckets[k].Grooming += p.amount;
+    else                              buckets[k].Other    += p.amount;
+  });
+
+  const labels = Object.keys(buckets).sort();
+  const ds = type => ({ label:type, data:labels.map(k=>buckets[k][type]||0) });
+
+  const colors = { Boarding:'#e76f51', Daycare:'#f4a261', Grooming:'#457b9d', Other:'#adb5bd' };
+
+  destroyChart('chartRevTime');
+  CHARTS.chartRevTime = new Chart(document.getElementById('chartRevTime'), {
+    type:'bar',
+    data:{
+      labels,
+      datasets:['Boarding','Daycare','Grooming','Other'].map(t=>({
+        ...ds(t), backgroundColor:colors[t], stack:'s'
+      }))
+    },
+    options:{
+      responsive:true, plugins:{legend:{position:'bottom'}},
+      scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:v=>fmt$(v)}}}
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REVENUE BY TYPE DONUT
+// ═══════════════════════════════════════════════════════════════
+function buildRevTypeChart() {
+  const { start, end } = periodDates(STATE.period);
+  const payments = paymentsInPeriod(start, end);
+  const m = revByType(payments);
+
+  destroyChart('chartRevType');
+  CHARTS.chartRevType = new Chart(document.getElementById('chartRevType'), {
+    type:'doughnut',
+    data:{
+      labels:Object.keys(m),
+      datasets:[{ data:Object.values(m), backgroundColor:['#e76f51','#f4a261','#457b9d','#adb5bd'], hoverOffset:6 }]
+    },
+    options:{ responsive:true, plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{label:c=>` ${c.label}: ${fmt$(c.raw)}`}}} }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PERIOD COMPARISON TABLE
+// ═══════════════════════════════════════════════════════════════
+function buildComparisonTable() {
+  const { start, end, priorStart, priorEnd } = periodDates(STATE.period);
+  const locs = STATE.location==='All' ? ['Fort Walton Beach','Niceville'] : [STATE.location];
+  const types = ['Grooming','Boarding','Daycare'];
+
+  const getRevByLocType = (payments) => {
+    const m={};
+    locs.forEach(l=>types.forEach(t=>{ m[l+'|'+t]=0; }));
+    payments.forEach(p=>{
+      const ct=(p.care_type||'').toLowerCase();
+      const t=ct.includes('boarding')?'Boarding':ct.includes('daycare')?'Daycare':ct.includes('grooming')?'Grooming':null;
+      if(!t) return;
+      const k=p.location+'|'+t;
+      if(k in m) m[k]+=p.amount;
+    });
+    return m;
+  };
+
+  const curP  = paymentsInPeriod(start, end);
+  const prevP = paymentsInPeriod(priorStart, priorEnd);
+  const cur   = getRevByLocType(curP);
+  const prev  = getRevByLocType(prevP);
+
+  const tbody = document.querySelector('#tbl-comparison tbody');
+  let rows = '';
+  locs.forEach(loc => {
+    types.forEach(type => {
+      const k=loc+'|'+type;
+      const c=cur[k]||0, p=prev[k]||0;
+      const chg=c-p;
+      const pct=p>0?(chg/p*100):null;
+      const cls=chg>0?'up':chg<0?'down':'flat';
+      rows += `<tr>
+        <td><span class="badge" style="background:${type==='Grooming'?'#457b9d':type==='Boarding'?'#e76f51':'#f4a261'};font-weight:500">${type}</span></td>
+        <td>${loc}</td>
+        <td class="text-end">${fmt$(c)}</td>
+        <td class="text-end">${fmt$(p)}</td>
+        <td class="text-end ${cls}">${chg>=0?'+':''}${fmt$(chg)}</td>
+        <td class="text-end ${cls}">${pct!==null?fmtPct(pct):'—'}</td>
+      </tr>`;
+    });
+    // subtotal
+    const cs=types.reduce((s,t)=>s+(cur[loc+'|'+t]||0),0);
+    const ps=types.reduce((s,t)=>s+(prev[loc+'|'+t]||0),0);
+    const chg=cs-ps; const pct=ps>0?(chg/ps*100):null;
+    const cls=chg>0?'up':chg<0?'down':'flat';
+    rows+=`<tr style="font-weight:600;background:#f8f9fa">
+      <td>Total</td><td>${loc}</td>
+      <td class="text-end">${fmt$(cs)}</td>
+      <td class="text-end">${fmt$(ps)}</td>
+      <td class="text-end ${cls}">${chg>=0?'+':''}${fmt$(chg)}</td>
+      <td class="text-end ${cls}">${pct!==null?fmtPct(pct):'—'}</td>
+    </tr>`;
+  });
+  tbody.innerHTML = rows;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// OCCUPANCY TAB
+// ═══════════════════════════════════════════════════════════════
+function buildOccupancyKpis() {
+  const { start, end } = periodDates(STATE.period);
+  const b = boardingInPeriod(start, end);
+  const d = daycareInPeriod(start, end);
+  const g = groomingInPeriod(start, end);
+
+  // Average daily dogs present for boarding (count on a given day = bookings where start<=day<=end)
+  // Approximate with total pet-nights / days-in-period
+  const days = Math.max(1, Math.round((end-start)/(1000*86400)));
+  const petNights = b.reduce((s,r)=>s+r.nights*r.num_pets,0);
+  const avgBoarding = (petNights/days).toFixed(1);
+  const avgDaycare = d.length ? (d.reduce((s,r)=>s+r.num_pets,0)/days).toFixed(1) : 0;
+  const groomCount = g.length;
+
+  const row = document.getElementById('occ-kpi-row');
+  row.innerHTML = [
+    {label:'Avg Daily Boarding Dogs', val:avgBoarding, unit:'dogs/day', color:'#e76f51'},
+    {label:'Avg Daily Daycare Dogs',  val:avgDaycare,  unit:'dogs/day', color:'#f4a261'},
+    {label:'Grooming Appointments',   val:groomCount,  unit:'in period', color:'#457b9d'},
+    {label:'Total Boarding Stays',    val:b.length,    unit:'in period', color:'#2d6a4f'},
+  ].map(k=>`<div class="col-6 col-lg-3"><div class="kpi-card">
+    <div class="kpi-label">${k.label}</div>
+    <div class="kpi-value" style="color:${k.color}">${k.val}</div>
+    <div class="kpi-sub text-muted">${k.unit}</div>
+  </div></div>`).join('');
+}
+
+function aggByDay(records, dateField, valueField) {
+  const m={};
+  records.forEach(r=>{
+    const k=r[dateField];
+    if(!k) return;
+    m[k]=(m[k]||0)+(r[valueField]||1);
+  });
+  return m;
+}
+
+function buildOccupancyCharts() {
+  const { start, end } = periodDates(STATE.period);
+
+  // Boarding: pet-nights by start_date as proxy
+  const b = boardingInPeriod(start, end);
+  const bDay = {};
+  b.forEach(r=>{ if(r.start_date) bDay[r.start_date]=(bDay[r.start_date]||0)+r.num_pets; });
+
+  // Daycare
+  const d = daycareInPeriod(start, end);
+  const dDay = aggByDay(d, 'date', 'num_pets');
+
+  // Grooming
+  const g = groomingInPeriod(start, end);
+  const gDay = aggByDay(g, 'date', 'num_pets');
+
+  // Build date range labels (limit to last 90 days for readability if wider)
+  const spanDays = Math.round((end-start)/(1000*86400));
+  const labelDays = Math.min(spanDays, STATE.period==='all'?180:spanDays);
+  const dateLabels=[];
+  for(let i=labelDays;i>=0;i--){
+    const x=new Date(end); x.setDate(x.getDate()-i);
+    dateLabels.push(x.toISOString().substring(0,10));
+  }
+
+  const mkChart = (id, label, dayMap, color) => {
+    destroyChart(id);
+    CHARTS[id] = new Chart(document.getElementById(id),{
+      type:'bar',
+      data:{
+        labels:dateLabels,
+        datasets:[{label, data:dateLabels.map(k=>dayMap[k]||0), backgroundColor:color+'99', borderColor:color, borderWidth:1}]
+      },
+      options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{maxTicksLimit:10}},y:{beginAtZero:true,ticks:{stepSize:1}}}}
+    });
+  };
+  mkChart('chartBoarding','Check-ins',bDay,'#e76f51');
+  mkChart('chartDaycare','Dogs',dDay,'#f4a261');
+  mkChart('chartGrooming','Appointments',gDay,'#457b9d');
+
+  // Day-of-week
+  const dowLabels=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dowD=Array(7).fill(0), dowG=Array(7).fill(0), dowB=Array(7).fill(0);
+  d.forEach(r=>{ if(r.date){ const dow=parseDate(r.date).getDay(); dowD[dow]+=r.num_pets; } });
+  g.forEach(r=>{ if(r.date){ const dow=parseDate(r.date).getDay(); dowG[dow]+=1; } });
+  b.forEach(r=>{ if(r.start_date){ const dow=parseDate(r.start_date).getDay(); dowB[dow]+=1; } });
+
+  destroyChart('chartDow');
+  CHARTS.chartDow = new Chart(document.getElementById('chartDow'),{
+    type:'bar',
+    data:{
+      labels:dowLabels,
+      datasets:[
+        {label:'Daycare',data:dowD,backgroundColor:'#f4a261aa',stack:'s'},
+        {label:'Grooming',data:dowG,backgroundColor:'#457b9daa',stack:'s'},
+        {label:'Boarding check-ins',data:dowB,backgroundColor:'#e76f51aa',stack:'s'},
+      ]
+    },
+    options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true}}}
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CUSTOMERS TAB
+// ═══════════════════════════════════════════════════════════════
+function buildTopCustomers() {
+  const { start, end } = periodDates(STATE.period);
+  const svc = STATE.custService;
+
+  // Build per-customer spend map from payments
+  const payments = paymentsInPeriod(start, end);
+  const custMap = {};
+
+  payments.forEach(p => {
+    const ct=(p.care_type||'').toLowerCase();
+    if(svc!=='all'){
+      if(svc==='boarding'  && !ct.includes('boarding'))  return;
+      if(svc==='daycare'   && !ct.includes('daycare'))   return;
+      if(svc==='grooming'  && !ct.includes('grooming'))  return;
+    }
+    const name = p.client_name||'Unknown';
+    if(!custMap[name]) custMap[name]={name, spend:0, visits:0, locs:new Set()};
+    custMap[name].spend  += p.amount;
+    custMap[name].visits += 1;
+    custMap[name].locs.add(p.location);
+  });
+
+  const sorted = Object.values(custMap).sort((a,b)=>b.spend-a.spend).slice(0,25);
+  const tbody = document.querySelector('#tbl-top-customers tbody');
+  tbody.innerHTML = sorted.map((c,i)=>`<tr>
+    <td>${i+1}</td>
+    <td><strong>${c.name}</strong></td>
+    <td><small>${[...c.locs].join(', ')}</small></td>
+    <td class="text-end">${c.visits}</td>
+    <td class="text-end"><strong>${fmt$(c.spend)}</strong></td>
+    <td class="text-end">${fmt$d(c.visits>0?c.spend/c.visits:0)}</td>
+  </tr>`).join('');
+}
+
+function buildAtRisk() {
+  // Compare last 45 days to prior 45 days for each customer
+  const now = today();
+  const d = n => { const x=new Date(now); x.setDate(x.getDate()-n); return x; };
+  const recent = d(45), mid = d(90);
+
+  // Use all appointment types for visit detection
+  const allVisits = [
+    ...filterByLoc(RAW.boarding).map(r=>({name:r.client_name, date:r.start_date, loc:r.location, type:'Boarding'})),
+    ...filterByLoc(RAW.daycare).map(r=>({name:r.client_name, date:r.date, loc:r.location, type:'Daycare'})),
+    ...filterByLoc(RAW.grooming).map(r=>({name:r.client_name, date:r.date, loc:r.location, type:'Grooming'})),
+  ];
+
+  const custVisits = {};
+  allVisits.forEach(v => {
+    if(!v.name || !v.date) return;
+    if(!custVisits[v.name]) custVisits[v.name]={name:v.name, loc:v.loc, recent:0, prior:0};
+    const vd = parseDate(v.date);
+    if(vd >= recent && vd <= now)  custVisits[v.name].recent++;
+    if(vd >= mid    && vd < recent) custVisits[v.name].prior++;
+  });
+
+  // Flag at-risk: had ≥2 visits in prior 45d AND dropped ≥50%
+  const atRisk = Object.values(custVisits)
+    .filter(c => c.prior >= 2 && c.recent < c.prior * 0.5)
+    .sort((a,b) => (b.prior-b.recent)-(a.prior-a.recent))
+    .slice(0, 20);
+
+  const container = document.getElementById('at-risk-list');
+  if(!atRisk.length){
+    container.innerHTML = `<div class="text-muted" style="font-size:.85rem">No at-risk customers detected in the current view. 🎉</div>`;
+    return;
+  }
+  container.innerHTML = atRisk.map(c => {
+    const drop = c.prior > 0 ? Math.round((1 - c.recent/c.prior)*100) : 100;
+    return `<div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+      <div>
+        <div class="fw-medium" style="font-size:.85rem">${c.name}</div>
+        <div class="text-muted" style="font-size:.75rem">${c.loc} · ${c.prior} visits (45–90d ago) → ${c.recent} (last 45d)</div>
+      </div>
+      <span class="risk-badge">−${drop}%</span>
+    </div>`;
+  }).join('');
+}
+
+function buildCustomerSearch() {
+  const input = document.getElementById('cust-search');
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    if(q.length < 2){ document.getElementById('cust-detail').innerHTML='<span class="text-muted">Search for a customer above to see their history.</span>'; return; }
+    showCustomerDetail(q);
+  });
+}
+
+function showCustomerDetail(q) {
+  const allVisits = [
+    ...RAW.boarding.map(r=>({name:r.client_name||'', date:r.start_date, loc:r.location, type:'Boarding', amount:r.net_sales})),
+    ...RAW.daycare.map(r=>({name:r.client_name||'', date:r.date, loc:r.location, type:'Daycare', amount:r.net_sales})),
+    ...RAW.grooming.map(r=>({name:r.client_name||'', date:r.date, loc:r.location, type:'Grooming', amount:r.net_sales})),
+  ].filter(v=>v.name.toLowerCase().includes(q) && v.date).sort((a,b)=>b.date.localeCompare(a.date));
+
+  if(!allVisits.length){ document.getElementById('cust-detail').innerHTML='<span class="text-muted">No results found.</span>'; return; }
+
+  const totalSpend = allVisits.reduce((s,v)=>s+v.amount,0);
+  const lastName   = allVisits[0].date;
+  const matchedNames = [...new Set(allVisits.map(v=>v.name))].slice(0,3).join(', ');
+
+  const typeChip = t => {
+    const c=t==='Boarding'?'#e76f51':t==='Daycare'?'#f4a261':'#457b9d';
+    return `<span style="background:${c}22;color:${c};border:1px solid ${c}66;border-radius:4px;font-size:.72rem;padding:.1rem .4rem">${t}</span>`;
+  };
+
+  const rows = allVisits.slice(0,30).map(v=>`<tr>
+    <td>${v.date}</td><td>${typeChip(v.type)}</td>
+    <td>${v.loc}</td><td class="text-end">${fmt$d(v.amount)}</td>
+  </tr>`).join('');
+
+  document.getElementById('cust-detail').innerHTML=`
+    <div class="row mb-3">
+      <div class="col-auto"><strong>${matchedNames}</strong></div>
+      <div class="col-auto text-muted">${allVisits.length} visits total · ${fmt$(totalSpend)} lifetime spend · Last visit: ${lastName}</div>
+    </div>
+    <div class="table-responsive" style="max-height:300px;overflow-y:auto">
+      <table class="table dash-table table-sm">
+        <thead><tr><th>Date</th><th>Type</th><th>Location</th><th class="text-end">Amount</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${allVisits.length>30?`<div class="text-muted mt-1" style="font-size:.75rem">Showing 30 of ${allVisits.length} visits.</div>`:''}
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FORECAST TAB
+// ═══════════════════════════════════════════════════════════════
+function buildForecast() {
+  // Weekly revenue for last 16 weeks
+  const now = today();
+  const wks = 16;
+  const weekData = [];
+  for(let i=wks;i>=1;i--){
+    const ws=new Date(now); ws.setDate(ws.getDate()-i*7);
+    const we=new Date(now); we.setDate(we.getDate()-(i-1)*7);
+    const pmt = paymentsInPeriod(ws,we);
+    const rev = pmt.reduce((s,p)=>s+p.amount,0);
+    weekData.push({label:`W-${i}`, start:ws, end:we, rev});
+  }
+
+  // Linear regression
+  const n=weekData.length;
+  const xs=weekData.map((_,i)=>i), ys=weekData.map(d=>d.rev);
+  const mx=xs.reduce((a,b)=>a+b,0)/n, my=ys.reduce((a,b)=>a+b,0)/n;
+  const slope=xs.reduce((s,x,i)=>s+(x-mx)*(ys[i]-my),0)/xs.reduce((s,x)=>s+(x-mx)**2,0);
+  const intercept=my-slope*mx;
+  const proj = (i) => Math.max(0, intercept + slope*i);
+
+  // Forecast 8 weeks
+  const fwLabels=[], fwData=[];
+  for(let i=0;i<8;i++){
+    const ws=new Date(now); ws.setDate(ws.getDate()+i*7);
+    const we=new Date(now); we.setDate(we.getDate()+(i+1)*7);
+    fwLabels.push(`${ws.toISOString().substring(5,10)}`);
+    fwData.push(Math.round(proj(n+i)));
+  }
+
+  destroyChart('chartForecast');
+  CHARTS.chartForecast = new Chart(document.getElementById('chartForecast'),{
+    type:'line',
+    data:{
+      labels:[...weekData.map(d=>d.label),...fwLabels],
+      datasets:[
+        {label:'Actual',data:[...ys,...Array(8).fill(null)],borderColor:'#2d6a4f',backgroundColor:'#2d6a4f22',tension:.3,fill:true},
+        {label:'Forecast',data:[...Array(n).fill(null),ys[n-1],...fwData],borderColor:'#adb5bd',borderDash:[5,5],tension:.3,pointStyle:'triangle'},
+      ]
+    },
+    options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{y:{ticks:{callback:v=>fmt$(v)}}}}
+  });
+
+  // Breakdown
+  const totalForecast = fwData.reduce((a,b)=>a+b,0);
+  const avgForecast   = totalForecast/8;
+  document.getElementById('forecast-breakdown').innerHTML=`
+    <div class="mb-3">
+      <div class="kpi-label">Projected 8-Week Revenue</div>
+      <div class="kpi-value">${fmt$(totalForecast)}</div>
+    </div>
+    <div class="mb-3">
+      <div class="kpi-label">Projected Weekly Average</div>
+      <div class="kpi-value" style="font-size:1.3rem">${fmt$(avgForecast)}</div>
+    </div>
+    <div class="mb-3">
+      <div class="kpi-label">Recent 8-Week Actual Avg</div>
+      <div class="kpi-value" style="font-size:1.3rem">${fmt$(ys.slice(-8).reduce((a,b)=>a+b,0)/8)}</div>
+    </div>
+    <div class="text-muted" style="font-size:.75rem">Weekly trend: ${slope>=0?'▲':'▼'} ${fmt$(Math.abs(slope))}/week</div>
+  `;
+
+  // Forecast KPIs
+  const nextWk = fwData[0], prev8avg = ys.slice(-8).reduce((a,b)=>a+b,0)/8;
+  const chg=(nextWk-prev8avg)/prev8avg*100;
+  document.getElementById('forecast-kpi-row').innerHTML=`
+    <div class="col-6 col-lg-3"><div class="kpi-card">
+      <div class="kpi-label">Next Week Projected</div>
+      <div class="kpi-value">${fmt$(nextWk)}</div>
+      <div class="kpi-sub ${chg>=0?'up':'down'}">${fmtPct(chg)} vs recent avg</div>
+    </div></div>
+    <div class="col-6 col-lg-3"><div class="kpi-card">
+      <div class="kpi-label">8-Week Forecast Total</div>
+      <div class="kpi-value">${fmt$(totalForecast)}</div>
+      <div class="kpi-sub text-muted">~${fmt$(avgForecast)}/wk avg</div>
+    </div></div>
+  `;
+
+  // Occupancy forecast (daycare)
+  const daycareWeekly=[];
+  for(let i=wks;i>=1;i--){
+    const ws=new Date(now); ws.setDate(ws.getDate()-i*7);
+    const we=new Date(now); we.setDate(we.getDate()-(i-1)*7);
+    const cnt=filterByLoc(RAW.daycare).filter(r=>inRange(r.date,ws,we)).reduce((s,r)=>s+r.num_pets,0);
+    daycareWeekly.push(cnt);
+  }
+  const dSlope=daycareWeekly.reduce((s,y,i)=>s+(i-wks/2)*(y-daycareWeekly.reduce((a,b)=>a+b)/wks),0)/daycareWeekly.reduce((s,_,i)=>s+(i-wks/2)**2,0)||0;
+  const dInt=daycareWeekly.reduce((a,b)=>a+b)/wks - dSlope*(wks/2);
+  const dFw=Array.from({length:8},(_,i)=>Math.max(0,Math.round(dInt+dSlope*(wks+i))));
+
+  destroyChart('chartForecastOcc');
+  CHARTS.chartForecastOcc = new Chart(document.getElementById('chartForecastOcc'),{
+    type:'line',
+    data:{
+      labels:[...daycareWeekly.map((_,i)=>`W-${wks-i}`),...fwLabels],
+      datasets:[
+        {label:'Actual weekly check-ins',data:[...daycareWeekly,...Array(8).fill(null)],borderColor:'#f4a261',backgroundColor:'#f4a26122',fill:true,tension:.3},
+        {label:'Forecast',data:[...Array(wks).fill(null),daycareWeekly[wks-1],...dFw],borderColor:'#adb5bd',borderDash:[5,5],tension:.3},
+      ]
+    },
+    options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CHART HELPERS
+// ═══════════════════════════════════════════════════════════════
+function destroyChart(id){
+  if(CHARTS[id]){ CHARTS[id].destroy(); delete CHARTS[id]; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RENDER DISPATCH
+// ═══════════════════════════════════════════════════════════════
+function render() {
+  const tab = STATE.tab;
+  if(tab==='revenue'){
+    buildKpiRow();
+    buildRevTimeChart();
+    buildRevTypeChart();
+    buildComparisonTable();
+  } else if(tab==='occupancy'){
+    buildOccupancyKpis();
+    buildOccupancyCharts();
+  } else if(tab==='customers'){
+    buildTopCustomers();
+    buildAtRisk();
+  } else if(tab==='forecast'){
+    buildForecast();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EVENT WIRING
+// ═══════════════════════════════════════════════════════════════
+function wireControls() {
+  // Period buttons
+  document.querySelectorAll('.btn-period').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('.btn-period').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      STATE.period = btn.dataset.p;
+      render();
+    });
+  });
+
+  // Location buttons
+  document.querySelectorAll('.loc-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('.loc-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      STATE.location = btn.dataset.loc;
+      render();
+    });
+  });
+
+  // Tab buttons
+  document.querySelectorAll('#mainTabs .nav-link').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('#mainTabs .nav-link').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      STATE.tab = btn.dataset.tab;
+      ['revenue','occupancy','customers','forecast'].forEach(t=>{
+        document.getElementById('tab-'+t).style.display = t===STATE.tab?'':'none';
+      });
+      render();
+    });
+  });
+
+  // Rev granularity
+  document.getElementById('rev-granularity').addEventListener('change', e=>{
+    STATE.revGranularity = e.target.value;
+    buildRevTimeChart();
+  });
+
+  // Customer service filter
+  document.getElementById('cust-service-filter').addEventListener('change', e=>{
+    STATE.custService = e.target.value;
+    buildTopCustomers();
+  });
+
+  buildCustomerSearch();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════════════════
+(async () => {
+  const ok = await loadData();
+  if(!ok) return;
+
+  // Show generated timestamp
+  if(RAW.generated){
+    const d=new Date(RAW.generated);
+    document.getElementById('generated-note').textContent=
+      `Data as of ${d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+  }
+
+  wireControls();
+  render();
+
+  document.getElementById('loading').style.display='none';
+})();
+</script>
+</body>
+</html>
