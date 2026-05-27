@@ -263,6 +263,17 @@ async function loadData() {
       </div>`;
     return false;
   }
+  // Normalize location names to short form on every record
+  const LOC_NORM = {
+    'Fort Walton Beach':'FWB', 'Primo Dog - Fort Walton Beach':'FWB',
+    'Niceville':'NV',          'Primo Dog - Niceville':'NV',
+  };
+  const normLoc = s => LOC_NORM[s] || s;
+  ['payments','boarding','daycare','grooming'].forEach(sheet=>{
+    (RAW[sheet]||[]).forEach(r=>{
+      if(r.location) r.location = normLoc(r.location);
+    });
+  });
   return true;
 }
 
@@ -275,7 +286,7 @@ function periodDates(p) {
   const ago = n => { const x=new Date(now); x.setDate(x.getDate()-n); return x; };
   if (p==='ytd')  return {start:new Date(now.getFullYear(),0,1),end:now,priorStart:new Date(now.getFullYear()-1,0,1),priorEnd:new Date(now.getFullYear()-1,now.getMonth(),now.getDate())};
   if (p==='365')  return {start:ago(365),end:now,priorStart:ago(730),priorEnd:ago(365)};
-  if (p==='all')  return {start:new Date('2020-01-01'),end:now,priorStart:new Date('2020-01-01'),priorEnd:now};
+  if (p==='all')  return {start:new Date('2023-01-01'),end:now,priorStart:new Date('2020-01-01'),priorEnd:new Date('2023-01-01')};
   const n=parseInt(p);
   return {start:ago(n),end:now,priorStart:ago(n*2),priorEnd:ago(n)};
 }
@@ -362,7 +373,7 @@ function buildRevKpis() {
       locHTML = `<div class="loc-breakdown">` +
         locs.map(loc=>{
           const v=sumAmt(curAll.filter(p=>p.location===loc));
-          return `<span class="loc-pill" style="background:${locColor(loc)}22;color:${locColor(loc)}">${loc.replace('Fort Walton Beach','FWB')}: ${fmt$(v)}</span>`;
+          return `<span class="loc-pill" style="background:${locColor(loc)}22;color:${locColor(loc)}">${loc}: ${fmt$(v)}</span>`;
         }).join('') + `</div>`;
     }
 
@@ -672,7 +683,7 @@ function buildOccCharts() {
         // Lighter shade for the second location so FWB vs NVL is distinct
         const alpha = li===0 ? 'cc' : '55';
         dowDatasets.push({
-          label: `${loc.replace('Fort Walton Beach','FWB')} — ${svc.key}`,
+          label: `${loc} — ${svc.key}`,
           data: counts,
           backgroundColor: svc.color+alpha,
           borderColor: svc.color,
@@ -961,10 +972,11 @@ function wireControls(){
 (async()=>{
   const ok=await loadData();
   if(!ok) return;
-  if(RAW.generated){
-    const d=new Date(RAW.generated);
+  const maxPayDate = RAW.payments.reduce((mx,p)=>p.date&&p.date>mx?p.date:mx,'');
+  const asOfDate = maxPayDate ? new Date(maxPayDate+'T00:00:00') : (RAW.generated ? new Date(RAW.generated) : null);
+  if(asOfDate){
     document.getElementById('generated-note').textContent=
-      `Data as of ${d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+      `Data as of ${asOfDate.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
   }
   buildLocChips();
   wireControls();
