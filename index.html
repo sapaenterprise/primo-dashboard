@@ -113,13 +113,13 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
               <option value="month" selected>By Month</option>
             </select>
           </div>
-          <canvas id="chartRevTime" height="200"></canvas>
+          <canvas id="chartRevTime" height="130"></canvas>
         </div>
       </div>
       <div class="col-lg-4">
         <div class="chart-card h-100">
           <div class="section-title">Revenue by Service</div>
-          <canvas id="chartRevType" height="210"></canvas>
+          <canvas id="chartRevType" height="160"></canvas>
         </div>
       </div>
       <div class="col-12">
@@ -200,7 +200,7 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
     <div class="row g-3">
       <div class="col-lg-8"><div class="chart-card">
         <div class="section-title">Revenue Forecast — Next 8 Weeks</div>
-        <canvas id="chartForecast" height="220"></canvas>
+        <canvas id="chartForecast" height="150"></canvas>
         <p class="forecast-note mt-2">Linear trend over the last 12 weeks of actuals. Use for planning only.</p>
       </div></div>
       <div class="col-lg-4"><div class="chart-card h-100">
@@ -209,7 +209,7 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
       </div></div>
       <div class="col-12"><div class="chart-card">
         <div class="section-title">Daycare Occupancy Forecast — Next 8 Weeks</div>
-        <canvas id="chartForecastOcc" height="160"></canvas>
+        <canvas id="chartForecastOcc" height="120"></canvas>
       </div></div>
     </div>
   </div>
@@ -580,7 +580,7 @@ function buildOccCharts() {
         plugins:{
           legend:{display:multiLoc, position:'bottom'},
           datalabels:{
-            display: ctx => ctx.dataset.type!=='line' && ctx.parsed.y>0 && !multiLoc,
+            display: ctx => ctx.dataset.type!=='line' && ((ctx.dataset.data[ctx.dataIndex]??0)>0) && !multiLoc,
             anchor:'end', align:'top',
             formatter: v => v>0 ? v : '',
             font:{size:9}, color:'#374151'
@@ -652,7 +652,7 @@ function buildOccCharts() {
         plugins:{
           legend:{position:'bottom'},
           datalabels:{
-            display: ctx=>ctx.parsed.y>0,
+            display: ctx=>((ctx.dataset.data[ctx.dataIndex]??0)>0),
             formatter: v=>v>0?v:'',
             font:{size:9}, color:'#fff', anchor:'center', align:'center'
           }
