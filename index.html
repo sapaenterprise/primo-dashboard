@@ -58,6 +58,11 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
 .adr-card{background:#f8faff;border-radius:8px;padding:.6rem .9rem;border:1px solid #e2e8f0;}
 .adr-label{font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;}
 .adr-value{font-size:1rem;font-weight:700;color:#374151;}
+
+/* Fixed-height chart wrappers — keeps charts equal regardless of column width */
+.rev-chart-wrap{position:relative;height:280px;}
+.comp-chart-wrap{position:relative;height:100%;}
+.fcast-chart-wrap{position:relative;height:190px;}
 </style>
 </head>
 <body>
@@ -113,23 +118,30 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
               <option value="month" selected>By Month</option>
             </select>
           </div>
-          <canvas id="chartRevTime" height="130"></canvas>
+          <div class="rev-chart-wrap"><canvas id="chartRevTime"></canvas></div>
         </div>
       </div>
       <div class="col-lg-4">
         <div class="chart-card h-100">
           <div class="section-title">Revenue by Service</div>
-          <canvas id="chartRevType" height="160"></canvas>
+          <div class="rev-chart-wrap"><canvas id="chartRevType"></canvas></div>
         </div>
       </div>
       <div class="col-12">
         <div class="chart-card">
           <div class="section-title">Period Comparison</div>
-          <div class="table-responsive">
-            <table class="table dash-table mb-0" id="tbl-comparison">
-              <thead><tr><th>Service</th><th>Location</th><th class="text-end">Current</th><th class="text-end">Prior</th><th class="text-end">Change</th><th class="text-end">%</th></tr></thead>
-              <tbody></tbody>
-            </table>
+          <div class="row g-3 align-items-start">
+            <div class="col-md-7">
+              <div class="table-responsive">
+                <table class="table dash-table mb-0" id="tbl-comparison">
+                  <thead><tr><th>Service</th><th>Location</th><th class="text-end">Current</th><th class="text-end">Prior</th><th class="text-end">Change</th><th class="text-end">%</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="col-md-5">
+              <div style="position:relative;height:240px;"><canvas id="chartComparison"></canvas></div>
+            </div>
           </div>
         </div>
       </div>
@@ -196,20 +208,16 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
 
   <!-- ══ FORECAST ══ -->
   <div id="tab-forecast" style="display:none">
-    <div class="row g-3 mb-3" id="forecast-kpi-row"></div>
+    <div class="row g-2 mb-3" id="forecast-kpi-row"></div>
     <div class="row g-3">
-      <div class="col-lg-8"><div class="chart-card">
+      <div class="col-md-6"><div class="chart-card">
         <div class="section-title">Revenue Forecast — Next 8 Weeks</div>
-        <canvas id="chartForecast" height="150"></canvas>
-        <p class="forecast-note mt-2">Linear trend over the last 12 weeks of actuals. Use for planning only.</p>
+        <div class="fcast-chart-wrap"><canvas id="chartForecast"></canvas></div>
+        <p class="forecast-note mt-1">Linear trend over last 16 weeks. Use for planning only.</p>
       </div></div>
-      <div class="col-lg-4"><div class="chart-card h-100">
-        <div class="section-title">Projected Weekly Revenue</div>
-        <div id="forecast-breakdown"></div>
-      </div></div>
-      <div class="col-12"><div class="chart-card">
+      <div class="col-md-6"><div class="chart-card">
         <div class="section-title">Daycare Occupancy Forecast — Next 8 Weeks</div>
-        <canvas id="chartForecastOcc" height="120"></canvas>
+        <div class="fcast-chart-wrap"><canvas id="chartForecastOcc"></canvas></div>
       </div></div>
     </div>
   </div>
@@ -415,7 +423,7 @@ function buildRevTimeChart() {
   destroyChart('chartRevTime');
   CHARTS.chartRevTime = new Chart(document.getElementById('chartRevTime'),{
     type:'bar', data:{labels,datasets},
-    options:{responsive:true,
+    options:{responsive:true, maintainAspectRatio:false,
       plugins:{legend:{position:'bottom'},datalabels:{display:false}},
       scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:v=>fmt$(v)}}}}
   });
@@ -441,7 +449,7 @@ function buildRevTypeChart() {
     }));
     CHARTS.chartRevType = new Chart(document.getElementById('chartRevType'),{
       type:'bar', data:{labels:types, datasets},
-      options:{responsive:true,
+      options:{responsive:true, maintainAspectRatio:false,
         plugins:{legend:{position:'bottom'},
           datalabels:{display:true,anchor:'end',align:'top',formatter:v=>v>0?fmt$(v):'',font:{size:10},color:'#374151'}},
         scales:{y:{ticks:{callback:v=>fmt$(v)}}}}
@@ -456,7 +464,7 @@ function buildRevTypeChart() {
         labels:Object.keys(typeMap),
         datasets:[{data:Object.values(typeMap),backgroundColor:['#457b9d','#e76f51','#f4a261','#adb5bd'],hoverOffset:6}]
       },
-      options:{responsive:true,
+      options:{responsive:true, maintainAspectRatio:false,
         plugins:{legend:{position:'bottom'},
           datalabels:{display:true,formatter:(v,ctx)=>{
             const total=ctx.dataset.data.reduce((a,b)=>a+b,0);
@@ -495,6 +503,47 @@ function buildComparisonTable() {
   document.querySelector('#tbl-comparison tbody').innerHTML=rows;
 }
 
+function buildComparisonChart() {
+  const {start,end,priorStart,priorEnd} = periodDates(STATE.period);
+  const locs = activeLocs();
+  const types = ['Grooming','Boarding','Daycare'];
+  const colors = {Grooming:'#457b9d',Boarding:'#e76f51',Daycare:'#f4a261'};
+  const curP  = paymentsInPeriod(start,end);
+  const prevP = paymentsInPeriod(priorStart,priorEnd);
+
+  // Sum across all selected locations
+  const curTotals  = types.map(t => curP.filter(p=>careType(p)===t).reduce((s,p)=>s+p.amount,0));
+  const prevTotals = types.map(t => prevP.filter(p=>careType(p)===t).reduce((s,p)=>s+p.amount,0));
+
+  destroyChart('chartComparison');
+  CHARTS.chartComparison = new Chart(document.getElementById('chartComparison'),{
+    type:'bar',
+    data:{
+      labels: types,
+      datasets:[
+        {label:'Current',  data:curTotals,  backgroundColor: types.map(t=>colors[t]+'cc'), borderColor: types.map(t=>colors[t]), borderWidth:1},
+        {label:'Prior',    data:prevTotals, backgroundColor: types.map(t=>colors[t]+'44'), borderColor: types.map(t=>colors[t]), borderWidth:1, borderDash:[4,3]},
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{position:'bottom', labels:{boxWidth:12, font:{size:11}}},
+        datalabels:{
+          display: ctx => (ctx.dataset.data[ctx.dataIndex]??0) > 0,
+          anchor:'end', align:'top',
+          formatter: v => fmt$(v),
+          font:{size:9}, color:'#374151'
+        }
+      },
+      scales:{
+        x:{ticks:{font:{size:11}}},
+        y:{ticks:{callback:v=>fmt$(v)}, beginAtZero:true}
+      }
+    }
+  });
+}
+
 // ═══════════════════════════════════════════════════════════
 // ── OCCUPANCY TAB ────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════
@@ -510,20 +559,22 @@ function buildOccKpis() {
   const pdTotal = pd.reduce((s,r)=>s+r.num_pets,0);
 
   const kv = (cur,prev) => {
-    const chg=prev>0?((cur-prev)/prev*100):0;
+    if(prev<=0) return `<div class="kpi-sub flat">— no prior data</div>`;
+    const chg=(cur-prev)/prev*100;
     const cls=chg>1?'up':chg<-1?'down':'flat';
     return `<div class="kpi-sub ${cls}">${chg>0?'▲':'▼'} ${fmtPct(Math.abs(chg))} vs prior</div>`;
   };
+  const prevDisp = (raw,decimals=1) => raw<=0 ? '—' : raw.toFixed(decimals);
 
   document.getElementById('occ-kpi-row').innerHTML = [
-    {label:'Avg Daily Boarding Dogs', val:(bNights/days).toFixed(1),  prev:(pbNights/days).toFixed(1),  color:'#e76f51', raw:bNights/days, praw:pbNights/days},
-    {label:'Avg Daily Daycare Dogs',  val:(dTotal/days).toFixed(1),   prev:(pdTotal/days).toFixed(1),   color:'#f4a261', raw:dTotal/days, praw:pdTotal/days},
-    {label:'Grooming Appointments',   val:g.length,                    prev:pg.length,                   color:'#457b9d', raw:g.length, praw:pg.length},
-    {label:'Boarding Stays',          val:b.length,                    prev:pb.length,                   color:'#2d6a4f', raw:b.length, praw:pb.length},
+    {label:'Avg Daily Boarding Dogs', val:(bNights/days).toFixed(1),  prev:prevDisp(pbNights/days), color:'#e76f51', raw:bNights/days, praw:pbNights/days},
+    {label:'Avg Daily Daycare Dogs',  val:(dTotal/days).toFixed(1),   prev:prevDisp(pdTotal/days),  color:'#f4a261', raw:dTotal/days, praw:pdTotal/days},
+    {label:'Grooming Appointments',   val:g.length,                    prev:pg.length>0?pg.length:'—', color:'#457b9d', raw:g.length, praw:pg.length},
+    {label:'Boarding Stays',          val:b.length,                    prev:pb.length>0?pb.length:'—', color:'#2d6a4f', raw:b.length, praw:pb.length},
   ].map(k=>`<div class="col-6 col-lg-3"><div class="kpi-card">
     <div class="kpi-label">${k.label}</div>
     <div class="kpi-value sm" style="color:${k.color}">${k.val}</div>
-    <div class="kpi-sub text-muted">Prior period: ${typeof k.prev==='number'?k.prev.toFixed(1):k.prev}</div>
+    <div class="kpi-sub text-muted">Prior period: ${k.prev}</div>
     ${kv(k.raw,k.praw)}
   </div></div>`).join('');
 }
@@ -783,7 +834,8 @@ function buildForecast() {
       {label:'Actual',data:[...ys,...Array(8).fill(null)],borderColor:'#2d6a4f',backgroundColor:'#2d6a4f22',tension:.3,fill:true},
       {label:'Forecast',data:[...Array(n).fill(null),ys[n-1],...fwData],borderColor:'#adb5bd',borderDash:[5,5],tension:.3,pointStyle:'triangle',pointRadius:4},
     ]},
-    options:{responsive:true,plugins:{legend:{position:'bottom'},datalabels:{display:false}},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom'},datalabels:{display:false}},
       scales:{y:{ticks:{callback:v=>fmt$(v)}}}}
   });
   const tf=fwData.reduce((a,b)=>a+b,0),avg8=ys.slice(-8).reduce((a,b)=>a+b)/8;
@@ -803,12 +855,12 @@ function buildForecast() {
       <div class="kpi-label">Weekly Trend</div>
       <div class="kpi-value sm ${slope>=0?'up':'down'}">${slope>=0?'▲':'▼'} ${fmt$(Math.abs(slope))}/wk</div>
       <div class="kpi-sub text-muted">${slope>=0?'Growing':'Declining'} trend</div>
+    </div></div>
+    <div class="col-6 col-lg-3"><div class="kpi-card">
+      <div class="kpi-label">Recent 8-Wk Actual Avg</div>
+      <div class="kpi-value sm">${fmt$(avg8)}</div>
+      <div class="kpi-sub text-muted">vs ${fmt$(tf/8)} projected</div>
     </div></div>`;
-  document.getElementById('forecast-breakdown').innerHTML=`
-    <div class="mb-3"><div class="kpi-label">Projected 8-Week Revenue</div><div class="kpi-value">${fmt$(tf)}</div></div>
-    <div class="mb-3"><div class="kpi-label">Projected Weekly Avg</div><div class="kpi-value sm">${fmt$(tf/8)}</div></div>
-    <div class="mb-3"><div class="kpi-label">Recent 8-Wk Actual Avg</div><div class="kpi-value sm">${fmt$(avg8)}</div></div>
-    <div class="text-muted" style="font-size:.75rem">Trend: ${slope>=0?'▲':'▼'} ${fmt$(Math.abs(slope))}/wk</div>`;
 
   // Daycare occupancy forecast
   const dys=[];
@@ -828,7 +880,9 @@ function buildForecast() {
       {label:'Actual weekly check-ins',data:[...dys,...Array(8).fill(null)],borderColor:'#f4a261',backgroundColor:'#f4a26122',fill:true,tension:.3},
       {label:'Forecast',data:[...Array(wks).fill(null),dys[wks-1],...dFw],borderColor:'#adb5bd',borderDash:[5,5],tension:.3},
     ]},
-    options:{responsive:true,plugins:{legend:{position:'bottom'},datalabels:{display:false}},scales:{y:{beginAtZero:true}}}
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom'},datalabels:{display:false}},
+      scales:{y:{beginAtZero:true}}}
   });
 }
 
@@ -837,7 +891,7 @@ function buildForecast() {
 // ═══════════════════════════════════════════════════════════
 function render() {
   const t=STATE.tab;
-  if(t==='revenue'){buildRevKpis();buildRevTimeChart();buildRevTypeChart();buildComparisonTable();}
+  if(t==='revenue'){buildRevKpis();buildRevTimeChart();buildRevTypeChart();buildComparisonTable();buildComparisonChart();}
   else if(t==='occupancy'){buildOccKpis();buildOccCharts();}
   else if(t==='customers'){buildTopCustomers();buildAtRisk();}
   else if(t==='forecast'){buildForecast();}
