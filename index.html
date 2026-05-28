@@ -198,8 +198,11 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
         </div>
       </div></div>
       <div class="col-lg-5"><div class="chart-card">
-        <div class="section-title">⚠️ At-Risk Customers</div>
-        <p class="text-muted" style="font-size:.78rem">Customers absent for ≥2.5× their personal visit interval. Min 3 visits in 6 months, avg interval ≤30 days.</p>
+        <div class="d-flex justify-content-between align-items-center">
+          <div class="section-title mb-0">⚠️ At-Risk Customers</div>
+          <a href="#" id="at-risk-reset" style="font-size:.75rem;display:none">Reset exclusions</a>
+        </div>
+        <p class="text-muted mt-1 mb-2" style="font-size:.78rem">Gone ≥2.5× their personal visit interval. Min 3 visits in 6 months, avg interval ≤30 days. Use Exclude to hide moved/inactive customers.</p>
         <div id="at-risk-list" style="max-height:380px;overflow-y:auto"></div>
       </div></div>
       <div class="col-12"><div class="chart-card">
@@ -311,16 +314,17 @@ const monthKey = d => d.substring(0,7);
 const activeLocs = () => STATE.locations.length ? STATE.locations : ALL_LOCS;
 const filterLoc  = arr => arr.filter(r => activeLocs().includes(r.location));
 
-function paymentsInPeriod(s, e)  { return filterLoc(RAW.payments).filter(r => r.transaction_type==='Sale' && inRange(r.date,s,e)); }
+function paymentsInPeriod(s, e)  { return filterLoc(RAW.payments).filter(r => r.amount > 0 && inRange(r.date,s,e)); }
 function boardingInPeriod(s, e)  { return filterLoc(RAW.boarding).filter(r => inRange(r.start_date,s,e)); }
 function daycareInPeriod(s, e)   { return filterLoc(RAW.daycare).filter(r => inRange(r.date,s,e)); }
 function groomingInPeriod(s, e)  { return filterLoc(RAW.grooming).filter(r => inRange(r.date,s,e)); }
 
 function careType(p) {
-  const ct=(p.care_type||'').toLowerCase();
-  if(ct.includes('boarding')) return 'Boarding';
-  if(ct.includes('daycare'))  return 'Daycare';
-  if(ct.includes('grooming')) return 'Grooming';
+  // MoeGo may put type info in care_type, category, OR service — check all three
+  const combined = `${p.care_type||''} ${p.category||''} ${p.service||''}`.toLowerCase();
+  if(combined.includes('boarding')) return 'Boarding';
+  if(combined.includes('daycare'))  return 'Daycare';
+  if(combined.includes('groom'))    return 'Grooming';
   return 'Other';
 }
 
@@ -797,6 +801,13 @@ function buildTopCustomers() {
   </tr>`).join('');
 }
 
+// ── At-risk exclusion list (localStorage) ────────────────────────────────────
+const AR_KEY = 'primo_atRisk_excluded';
+function getExclusions()         { try{return JSON.parse(localStorage.getItem(AR_KEY)||'[]');}catch{return[];} }
+function addExclusion(name)      { const ex=getExclusions(); if(!ex.includes(name)){ex.push(name);localStorage.setItem(AR_KEY,JSON.stringify(ex));} }
+function removeExclusion(name)   { localStorage.setItem(AR_KEY,JSON.stringify(getExclusions().filter(n=>n!==name))); }
+function clearExclusions()       { localStorage.removeItem(AR_KEY); }
+
 function buildAtRisk() {
   // Statistical approach: each customer's PERSONAL visit interval is the baseline.
   // Flag if they've been absent for ≥2.5× their normal interval.
@@ -851,20 +862,51 @@ function buildAtRisk() {
     }
   });
 
-  // Sort by most overdue (ratio of absence to normal interval)
+  // Sort by most overdue; remove manually excluded customers
   atRisk.sort((a,b)=>parseFloat(b.overdueRatio)-parseFloat(a.overdueRatio));
+  const excluded = getExclusions();
+  const visible  = atRisk.filter(c=>!excluded.includes(c.name));
 
   const el=document.getElementById('at-risk-list');
-  if(!atRisk.length){el.innerHTML='<div class="text-muted" style="font-size:.85rem">No at-risk customers in the last 6 months. 🎉</div>';return;}
-  el.innerHTML=atRisk.slice(0,20).map(c=>`
-    <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
-      <div>
-        <div class="fw-medium" style="font-size:.85rem">${c.name}</div>
-        <div class="text-muted" style="font-size:.75rem">${c.loc} · ${c.freqLabel} (every ~${c.avgInterval}d avg) · ${c.totalVisits} visits in 6mo</div>
-        <div class="text-muted" style="font-size:.75rem">Last seen: ${c.lastVisit} · Gone ${c.daysSinceLast}d</div>
-      </div>
-      <span class="risk-badge">${c.overdueRatio}× overdue</span>
-    </div>`).join('');
+
+  const renderList = () => {
+    const excl = getExclusions();
+    const show  = atRisk.filter(c=>!excl.includes(c.name)).slice(0,20);
+    if(!show.length){
+      el.innerHTML='<div class="text-muted" style="font-size:.85rem">No at-risk customers in the last 6 months. 🎉</div>';
+      return;
+    }
+    el.innerHTML = show.map(c=>`
+      <div class="d-flex justify-content-between align-items-center py-2 border-bottom gap-2">
+        <div style="flex:1;min-width:0">
+          <div class="fw-medium" style="font-size:.85rem">${c.name}</div>
+          <div class="text-muted" style="font-size:.75rem">${c.loc} · ${c.freqLabel} (every ~${c.avgInterval}d avg) · ${c.totalVisits} visits in 6mo</div>
+          <div class="text-muted" style="font-size:.75rem">Last seen: ${c.lastVisit} · Gone ${c.daysSinceLast}d</div>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-shrink-0">
+          <span class="risk-badge">${c.overdueRatio}× overdue</span>
+          <button class="btn btn-sm btn-outline-secondary py-0 px-1 exclude-btn" style="font-size:.72rem" data-name="${c.name.replace(/"/g,'&quot;')}">Exclude</button>
+        </div>
+      </div>`).join('');
+    // Wire exclude buttons
+    el.querySelectorAll('.exclude-btn').forEach(btn=>{
+      btn.addEventListener('click',()=>{ addExclusion(btn.dataset.name); renderList(); });
+    });
+  };
+
+  if(!visible.length && !excluded.length){
+    el.innerHTML='<div class="text-muted" style="font-size:.85rem">No at-risk customers in the last 6 months. 🎉</div>';
+    return;
+  }
+
+  renderList();
+
+  // Reset link if there are exclusions
+  const resetEl = document.getElementById('at-risk-reset');
+  if(resetEl){
+    resetEl.style.display = excluded.length ? '' : 'none';
+    resetEl.onclick = ()=>{ clearExclusions(); renderList(); resetEl.style.display='none'; };
+  }
 }
 
 
@@ -914,7 +956,7 @@ function buildForecast() {
     const we=new Date(now); we.setDate(we.getDate()-(i-1)*7);
     locs.forEach(loc=>{
       locRevYs[loc].push(
-        filterLoc(RAW.payments).filter(p=>p.location===loc&&p.transaction_type==='Sale'&&inRange(p.date,ws,we))
+        filterLoc(RAW.payments).filter(p=>p.location===loc&&p.amount>0&&inRange(p.date,ws,we))
           .reduce((s,p)=>s+p.amount,0)
       );
     });
