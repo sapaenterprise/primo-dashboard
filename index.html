@@ -62,7 +62,10 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
 /* Fixed-height chart wrappers — keeps charts equal regardless of column width */
 .rev-chart-wrap{position:relative;height:280px;}
 .comp-chart-wrap{position:relative;height:100%;}
-.fcast-chart-wrap{position:relative;height:190px;}
+.fcast-chart-wrap{position:relative;height:380px;}
+
+/* Sticky tab bar */
+.sticky-tabs{position:sticky;top:105px;background:#f5f7fa;z-index:98;padding-top:4px;margin-bottom:0!important;border-bottom:1px solid #dee2e6;}
 </style>
 </head>
 <body>
@@ -84,6 +87,7 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
       <option value="7">Last 7 days</option>
       <option value="30" selected>Last 30 days</option>
       <option value="90">Last 90 days</option>
+      <option value="qtd">Quarter to date</option>
       <option value="ytd">Year to date</option>
       <option value="365">Last 12 months</option>
       <option value="all">All time</option>
@@ -97,12 +101,13 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
 </div>
 
 <div class="container-fluid px-3 py-3">
-  <ul class="nav nav-tabs mb-3" id="mainTabs">
+  <ul class="nav nav-tabs sticky-tabs" id="mainTabs">
     <li class="nav-item"><button class="nav-link active" data-tab="revenue">Revenue</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="occupancy">Occupancy</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="customers">Customers</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="forecast">Forecast</button></li>
   </ul>
+  <div style="height:.75rem"></div>
 
   <!-- ══ REVENUE ══ -->
   <div id="tab-revenue">
@@ -140,7 +145,8 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
               </div>
             </div>
             <div class="col-md-5">
-              <div style="position:relative;height:240px;"><canvas id="chartComparison"></canvas></div>
+              <div class="section-title">Current vs Prior — by Service</div>
+              <div style="position:relative;height:260px;"><canvas id="chartComparison"></canvas></div>
             </div>
           </div>
         </div>
@@ -284,6 +290,7 @@ const today = () => new Date();
 function periodDates(p) {
   const now = today();
   const ago = n => { const x=new Date(now); x.setDate(x.getDate()-n); return x; };
+  if (p==='qtd')  { const qM=Math.floor(now.getMonth()/3)*3; const qS=new Date(now.getFullYear(),qM,1); const pqS=new Date(now.getFullYear(),qM-3,1); return {start:qS,end:now,priorStart:pqS,priorEnd:new Date(qS)}; }
   if (p==='ytd')  return {start:new Date(now.getFullYear(),0,1),end:now,priorStart:new Date(now.getFullYear()-1,0,1),priorEnd:new Date(now.getFullYear()-1,now.getMonth(),now.getDate())};
   if (p==='365')  return {start:ago(365),end:now,priorStart:ago(730),priorEnd:ago(365)};
   if (p==='all')  return {start:new Date('2023-01-01'),end:now,priorStart:new Date('2020-01-01'),priorEnd:new Date('2023-01-01')};
@@ -412,22 +419,25 @@ function buildRevTimeChart() {
   const gran = STATE.revGran;
   const keyFn = gran==='week' ? weekKey : monthKey;
   const payments = paymentsInPeriod(start,end);
-  const types = ['Boarding','Daycare','Grooming','Other'];
-  const colors = {Boarding:'#e76f51',Daycare:'#f4a261',Grooming:'#457b9d',Other:'#adb5bd'};
+  const locs = activeLocs();
 
   const buckets = {};
   payments.forEach(p=>{
     if(!p.date) return;
     const k=keyFn(p.date);
-    if(!buckets[k]) buckets[k]={Boarding:0,Daycare:0,Grooming:0,Other:0};
-    buckets[k][careType(p)]+=p.amount;
+    if(!buckets[k]){ buckets[k]={}; locs.forEach(l=>{buckets[k][l]=0;}); }
+    buckets[k][p.location]=(buckets[k][p.location]||0)+p.amount;
   });
   const labels=Object.keys(buckets).sort();
-  const totals=labels.map(k=>types.reduce((s,t)=>s+buckets[k][t],0));
+  const totals=labels.map(k=>locs.reduce((s,l)=>s+(buckets[k][l]||0),0));
 
-  const datasets = types.map(t=>({
-    label:t, data:labels.map(k=>buckets[k][t]||0),
-    backgroundColor:colors[t], stack:'s',
+  const datasets = locs.map(loc=>({
+    label:loc,
+    data:labels.map(k=>buckets[k][loc]||0),
+    backgroundColor:locColor(loc)+'cc',
+    borderColor:locColor(loc),
+    borderWidth:1,
+    stack:'s',
   }));
   datasets.push(trendDataset(totals,'#374151','Total trend'));
 
@@ -547,9 +557,10 @@ function buildComparisonChart() {
           font:{size:9}, color:'#374151'
         }
       },
+      layout:{padding:{top:22}},
       scales:{
         x:{ticks:{font:{size:11}}},
-        y:{ticks:{callback:v=>fmt$(v)}, beginAtZero:true}
+        y:{ticks:{callback:v=>fmt$(v), font:{size:11}}, beginAtZero:true}
       }
     }
   });
@@ -661,8 +672,14 @@ function buildOccCharts() {
   mkClusteredChart('chartDaycare', 'Dogs',         d,'date',      'num_pets','#f4a261');
   mkClusteredChart('chartGrooming','Appointments', g,'date',      'num_pets','#457b9d');
 
-  // ── Day-of-Week chart: stacked by service, clustered by location ──────────
+  // ── Day-of-Week chart: stacked by service, clustered by location — shows AVERAGES ──────────
   const dowLabels=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  // Count how many times each weekday occurred in the selected period (for averaging)
+  const dowOcc=Array(7).fill(0);
+  for(let dd=new Date(start);dd<=end;dd.setDate(dd.getDate()+1)) dowOcc[dd.getDay()]++;
+  const dowAvg=(counts)=>counts.map((c,i)=>dowOcc[i]>0?Math.round(c/dowOcc[i]*10)/10:0);
+
   const svcDef = [
     {key:'Daycare',  records:d, dateField:'date',       valFn:r=>r.num_pets, color:'#f4a261'},
     {key:'Grooming', records:g, dateField:'date',       valFn:()=>1,         color:'#457b9d'},
@@ -673,22 +690,20 @@ function buildOccCharts() {
   const dowDatasets = [];
 
   if(multiLoc) {
-    // Each location gets its own stack; within that stack, services are stacked
     locs.forEach((loc, li) => {
       svcDef.forEach(svc => {
-        const counts = Array(7).fill(0);
+        const raw = Array(7).fill(0);
         svc.records.filter(r=>r.location===loc).forEach(r=>{
-          const df=r[svc.dateField]; if(df) counts[parseDate(df).getDay()]+=svc.valFn(r);
+          const df=r[svc.dateField]; if(df) raw[parseDate(df).getDay()]+=svc.valFn(r);
         });
-        // Lighter shade for the second location so FWB vs NVL is distinct
         const alpha = li===0 ? 'cc' : '55';
         dowDatasets.push({
           label: `${loc} — ${svc.key}`,
-          data: counts,
+          data: dowAvg(raw),
           backgroundColor: svc.color+alpha,
           borderColor: svc.color,
           borderWidth: li===0 ? 0 : 1,
-          stack: loc,   // same stack per location → stacked within, clustered between
+          stack: loc,
         });
       });
     });
@@ -697,16 +712,17 @@ function buildOccCharts() {
       options:{responsive:true,
         plugins:{
           legend:{position:'bottom', labels:{boxWidth:12, font:{size:10}}},
-          datalabels:{display:false}
+          datalabels:{display:false},
+          tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.y} avg`}}
         },
-        scales:{x:{stacked:true}, y:{stacked:true, beginAtZero:true}}
+        scales:{x:{stacked:true}, y:{stacked:true, beginAtZero:true, title:{display:true,text:'Avg per day',font:{size:10}}}}
       }
     });
   } else {
     svcDef.forEach(svc=>{
-      const counts=Array(7).fill(0);
-      svc.records.forEach(r=>{ const df=r[svc.dateField]; if(df) counts[parseDate(df).getDay()]+=svc.valFn(r); });
-      dowDatasets.push({label:svc.key, data:counts, backgroundColor:svc.color+'aa', stack:'s'});
+      const raw=Array(7).fill(0);
+      svc.records.forEach(r=>{ const df=r[svc.dateField]; if(df) raw[parseDate(df).getDay()]+=svc.valFn(r); });
+      dowDatasets.push({label:svc.key, data:dowAvg(raw), backgroundColor:svc.color+'aa', stack:'s'});
     });
     CHARTS.chartDow = new Chart(document.getElementById('chartDow'),{
       type:'bar', data:{labels:dowLabels, datasets:dowDatasets},
@@ -717,9 +733,10 @@ function buildOccCharts() {
             display: ctx=>((ctx.dataset.data[ctx.dataIndex]??0)>0),
             formatter: v=>v>0?v:'',
             font:{size:9}, color:'#fff', anchor:'center', align:'center'
-          }
+          },
+          tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.y} avg`}}
         },
-        scales:{x:{stacked:true}, y:{stacked:true, beginAtZero:true}}
+        scales:{x:{stacked:true}, y:{stacked:true, beginAtZero:true, title:{display:true,text:'Avg per day',font:{size:10}}}}
       }
     });
   }
@@ -757,7 +774,12 @@ function buildTopCustomers() {
 function buildAtRisk() {
   const now=today();
   const ago=n=>{const x=new Date(now);x.setDate(x.getDate()-n);return x;};
-  const recent=ago(45), mid=ago(90);
+  // Baseline: weeks 7–12 back (6-week window = ~42 days). Recent: last 6 weeks.
+  // This smooths out 1–2 week vacations. Flag only if baseline rate ≥2.5/wk AND recent rate ≤1/wk.
+  const recentStart=ago(42);   // 6 weeks ago
+  const baseStart  =ago(84);   // 12 weeks ago
+  const baseEnd    =ago(42);   // 6 weeks ago
+
   const all=[
     ...filterLoc(RAW.boarding).map(r=>({name:r.client_name,date:r.start_date,loc:r.location})),
     ...filterLoc(RAW.daycare).map(r=>({name:r.client_name,date:r.date,loc:r.location})),
@@ -766,21 +788,27 @@ function buildAtRisk() {
   const cm={};
   all.forEach(v=>{
     if(!v.name||!v.date) return;
-    if(!cm[v.name]) cm[v.name]={name:v.name,loc:v.loc,recent:0,prior:0};
+    if(!cm[v.name]) cm[v.name]={name:v.name,loc:v.loc,recent:0,base:0};
     const vd=parseDate(v.date);
-    if(vd>=recent&&vd<=now)  cm[v.name].recent++;
-    if(vd>=mid&&vd<recent)   cm[v.name].prior++;
+    if(vd>=recentStart&&vd<=now) cm[v.name].recent++;
+    if(vd>=baseStart&&vd<baseEnd) cm[v.name].base++;
   });
-  const atRisk=Object.values(cm).filter(c=>c.prior>=2&&c.recent<c.prior*0.5)
-    .sort((a,b)=>(b.prior-b.recent)-(a.prior-a.recent)).slice(0,20);
+
+  const atRisk=Object.values(cm).filter(c=>{
+    const baseRate  = c.base   / 6;  // avg visits/week over 6-week baseline
+    const recentRate= c.recent / 6;  // avg visits/week over recent 6 weeks
+    return baseRate >= 2.5 && recentRate <= 1;
+  }).sort((a,b)=>(b.base/6)-(a.base/6)).slice(0,20);
+
   const el=document.getElementById('at-risk-list');
   if(!atRisk.length){el.innerHTML='<div class="text-muted" style="font-size:.85rem">No at-risk customers. 🎉</div>';return;}
   el.innerHTML=atRisk.map(c=>{
-    const drop=c.prior>0?Math.round((1-c.recent/c.prior)*100):100;
+    const bRate=(c.base/6).toFixed(1), rRate=(c.recent/6).toFixed(1);
+    const drop=c.base>0?Math.round((1-(c.recent/c.base))*100):100;
     return `<div class="d-flex justify-content-between align-items-center py-2 border-bottom">
       <div>
         <div class="fw-medium" style="font-size:.85rem">${c.name}</div>
-        <div class="text-muted" style="font-size:.75rem">${c.loc} · ${c.prior} visits (45–90d ago) → ${c.recent} (last 45d)</div>
+        <div class="text-muted" style="font-size:.75rem">${c.loc} · Baseline ${bRate}/wk → Recent ${rRate}/wk</div>
       </div>
       <span class="risk-badge">−${drop}%</span>
     </div>`;
@@ -821,36 +849,66 @@ function buildCustomerSearch() {
 function buildForecast() {
   const now=today();
   const wks=16;
-  const ys=[],wkLabels=[];
+  const locs=activeLocs();
+  const wkLabels=[];
+  for(let i=wks;i>=1;i--) wkLabels.push(`W-${i}`);
+
+  // Build per-location weekly revenue actuals
+  const locRevYs={};
+  locs.forEach(loc=>{ locRevYs[loc]=[]; });
   for(let i=wks;i>=1;i--){
     const ws=new Date(now); ws.setDate(ws.getDate()-i*7);
     const we=new Date(now); we.setDate(we.getDate()-(i-1)*7);
-    ys.push(paymentsInPeriod(ws,we).reduce((s,p)=>s+p.amount,0));
-    wkLabels.push(`W-${i}`);
+    locs.forEach(loc=>{
+      locRevYs[loc].push(
+        filterLoc(RAW.payments).filter(p=>p.location===loc&&p.transaction_type==='Sale'&&inRange(p.date,ws,we))
+          .reduce((s,p)=>s+p.amount,0)
+      );
+    });
   }
-  const n=wks,xs=ys.map((_,i)=>i);
-  const mx=xs.reduce((a,b)=>a+b)/n,my=ys.reduce((a,b)=>a+b)/n;
-  const slope=xs.reduce((s,x,i)=>s+(x-mx)*(ys[i]-my),0)/(xs.reduce((s,x)=>s+(x-mx)**2,0)||1);
+  const ys=Array.from({length:wks},(_,i)=>locs.reduce((s,loc)=>s+locRevYs[loc][i],0));
+
+  // Trim leading zero-weeks before regression so sparse history doesn't skew the line
+  let firstNZ=ys.findIndex(v=>v>0); if(firstNZ<0) firstNZ=0;
+  const tYs=ys.slice(firstNZ), tn=tYs.length;
+  const tXs=tYs.map((_,i)=>i);
+  const mx=tXs.reduce((a,b)=>a+b,0)/tn, my=tYs.reduce((a,b)=>a+b,0)/tn;
+  const slope=tXs.reduce((s,x,i)=>s+(x-mx)*(tYs[i]-my),0)/(tXs.reduce((s,x)=>s+(x-mx)**2,0)||1);
   const ic=my-slope*mx;
-  const fwLabels=[],fwData=[];
+
+  const fwLabels=[], fwData=[];
   for(let i=0;i<8;i++){
     const ws=new Date(now); ws.setDate(ws.getDate()+i*7);
     fwLabels.push(ws.toISOString().substring(5,10));
-    fwData.push(Math.max(0,Math.round(ic+slope*(n+i))));
+    fwData.push(Math.max(0,Math.round(ic+slope*(tn+i))));
   }
+  const allLabels=[...wkLabels,...fwLabels];
+
+  // Per-location actual lines (no fill) + aggregate dashed forecast
+  const revDatasets=locs.map(loc=>({
+    label:loc,
+    data:[...locRevYs[loc],...Array(8).fill(null)],
+    borderColor:locColor(loc), backgroundColor:'transparent',
+    tension:.3, fill:false, pointRadius:2, borderWidth:2,
+  }));
+  revDatasets.push({
+    label:'Forecast (total)',
+    data:[...Array(wks).fill(null),ys[wks-1],...fwData],
+    borderColor:'#9ca3af', borderDash:[5,5], tension:.3,
+    fill:false, pointStyle:'triangle', pointRadius:4, borderWidth:1.5,
+  });
+
   destroyChart('chartForecast');
   CHARTS.chartForecast=new Chart(document.getElementById('chartForecast'),{
-    type:'line',
-    data:{labels:[...wkLabels,...fwLabels],datasets:[
-      {label:'Actual',data:[...ys,...Array(8).fill(null)],borderColor:'#2d6a4f',backgroundColor:'#2d6a4f22',tension:.3,fill:true},
-      {label:'Forecast',data:[...Array(n).fill(null),ys[n-1],...fwData],borderColor:'#adb5bd',borderDash:[5,5],tension:.3,pointStyle:'triangle',pointRadius:4},
-    ]},
+    type:'line', data:{labels:allLabels, datasets:revDatasets},
     options:{responsive:true, maintainAspectRatio:false,
       plugins:{legend:{position:'bottom'},datalabels:{display:false}},
       scales:{y:{ticks:{callback:v=>fmt$(v)}}}}
   });
-  const tf=fwData.reduce((a,b)=>a+b,0),avg8=ys.slice(-8).reduce((a,b)=>a+b)/8;
-  const chg=(fwData[0]-avg8)/avg8*100;
+
+  const tf=fwData.reduce((a,b)=>a+b,0);
+  const avg8=tYs.slice(-8).reduce((a,b)=>a+b,0)/Math.min(8,tn);
+  const chg=avg8>0?(fwData[0]-avg8)/avg8*100:0;
   document.getElementById('forecast-kpi-row').innerHTML=`
     <div class="col-6 col-lg-3"><div class="kpi-card">
       <div class="kpi-label">Next Week Projected</div>
@@ -863,34 +921,51 @@ function buildForecast() {
       <div class="kpi-sub text-muted">~${fmt$(tf/8)}/wk avg</div>
     </div></div>
     <div class="col-6 col-lg-3"><div class="kpi-card">
-      <div class="kpi-label">Weekly Trend</div>
+      <div class="kpi-label">Weekly Growth Rate</div>
       <div class="kpi-value sm ${slope>=0?'up':'down'}">${slope>=0?'▲':'▼'} ${fmt$(Math.abs(slope))}/wk</div>
-      <div class="kpi-sub text-muted">${slope>=0?'Growing':'Declining'} trend</div>
+      <div class="kpi-sub text-muted">Change per week (trend slope)</div>
     </div></div>
     <div class="col-6 col-lg-3"><div class="kpi-card">
-      <div class="kpi-label">Recent 8-Wk Actual Avg</div>
+      <div class="kpi-label">Recent Actual Avg/Wk</div>
       <div class="kpi-value sm">${fmt$(avg8)}</div>
       <div class="kpi-sub text-muted">vs ${fmt$(tf/8)} projected</div>
     </div></div>`;
 
-  // Daycare occupancy forecast
-  const dys=[];
+  // ── Daycare occupancy forecast — per location ──
+  const locDYs={};
+  locs.forEach(loc=>{ locDYs[loc]=[]; });
   for(let i=wks;i>=1;i--){
     const ws=new Date(now); ws.setDate(ws.getDate()-i*7);
     const we=new Date(now); we.setDate(we.getDate()-(i-1)*7);
-    dys.push(filterLoc(RAW.daycare).filter(r=>inRange(r.date,ws,we)).reduce((s,r)=>s+r.num_pets,0));
+    locs.forEach(loc=>{
+      locDYs[loc].push(
+        RAW.daycare.filter(r=>r.location===loc&&inRange(r.date,ws,we)).reduce((s,r)=>s+r.num_pets,0)
+      );
+    });
   }
-  const dm=dys.reduce((a,b)=>a+b)/wks;
-  const dSlope=dys.reduce((s,y,i)=>s+(i-wks/2)*(y-dm),0)/(dys.reduce((s,_,i)=>s+(i-wks/2)**2,0)||1);
-  const dIc=dm-dSlope*(wks/2);
-  const dFw=Array.from({length:8},(_,i)=>Math.max(0,Math.round(dIc+dSlope*(wks+i))));
+  const dys=Array.from({length:wks},(_,i)=>locs.reduce((s,loc)=>s+(locDYs[loc][i]||0),0));
+  let dfirst=dys.findIndex(v=>v>0); if(dfirst<0) dfirst=0;
+  const dtYs=dys.slice(dfirst), dtn=dtYs.length;
+  const dm=dtYs.reduce((a,b)=>a+b,0)/dtn;
+  const dSlope=dtYs.reduce((s,y,i)=>s+(i-dtn/2)*(y-dm),0)/(dtYs.reduce((s,_,i)=>s+(i-dtn/2)**2,0)||1);
+  const dIc=dm-dSlope*(dtn/2);
+  const dFw=Array.from({length:8},(_,i)=>Math.max(0,Math.round(dIc+dSlope*(dtn+i))));
+
+  const occDatasets=locs.map(loc=>({
+    label:loc,
+    data:[...locDYs[loc],...Array(8).fill(null)],
+    borderColor:locColor(loc), backgroundColor:'transparent',
+    fill:false, tension:.3, pointRadius:2, borderWidth:2,
+  }));
+  occDatasets.push({
+    label:'Forecast (total)',
+    data:[...Array(wks).fill(null),dys[wks-1],...dFw],
+    borderColor:'#9ca3af', borderDash:[5,5], tension:.3, fill:false,
+  });
+
   destroyChart('chartForecastOcc');
   CHARTS.chartForecastOcc=new Chart(document.getElementById('chartForecastOcc'),{
-    type:'line',
-    data:{labels:[...wkLabels,...fwLabels],datasets:[
-      {label:'Actual weekly check-ins',data:[...dys,...Array(8).fill(null)],borderColor:'#f4a261',backgroundColor:'#f4a26122',fill:true,tension:.3},
-      {label:'Forecast',data:[...Array(wks).fill(null),dys[wks-1],...dFw],borderColor:'#adb5bd',borderDash:[5,5],tension:.3},
-    ]},
+    type:'line', data:{labels:allLabels, datasets:occDatasets},
     options:{responsive:true, maintainAspectRatio:false,
       plugins:{legend:{position:'bottom'},datalabels:{display:false}},
       scales:{y:{beginAtZero:true}}}
