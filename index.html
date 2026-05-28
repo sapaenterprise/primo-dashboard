@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Primo Dog — Business Dashboard</title>
+<title>Primo Dog — Dashboard v28</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
@@ -60,7 +60,7 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
 .adr-value{font-size:1rem;font-weight:700;color:#374151;}
 
 /* Fixed-height chart wrappers — keeps charts equal regardless of column width */
-.rev-chart-wrap{position:relative;height:280px;}
+.rev-chart-wrap{position:relative;height:340px;}
 .comp-chart-wrap{position:relative;height:100%;}
 .fcast-chart-wrap{position:relative;height:380px;}
 
@@ -585,7 +585,7 @@ function buildComparisonChart() {
         tooltip:{mode:'index'}
       },
       scales:{
-        x:{stacked:true, ticks:{font:{size:11}}},
+        x:{ticks:{font:{size:11}}},
         y:{stacked:true, ticks:{callback:v=>fmt$(v), font:{size:11}}, beginAtZero:true}
       }
     }
@@ -954,11 +954,9 @@ function buildForecast() {
   for(let i=wks;i>=1;i--){
     const ws=new Date(now); ws.setDate(ws.getDate()-i*7);
     const we=new Date(now); we.setDate(we.getDate()-(i-1)*7);
+    const weekPayments = paymentsInPeriod(ws,we);
     locs.forEach(loc=>{
-      locRevYs[loc].push(
-        filterLoc(RAW.payments).filter(p=>p.location===loc&&p.amount>0&&inRange(p.date,ws,we))
-          .reduce((s,p)=>s+p.amount,0)
-      );
+      locRevYs[loc].push(weekPayments.filter(p=>p.location===loc).reduce((s,p)=>s+p.amount,0));
     });
   }
   const ys=Array.from({length:wks},(_,i)=>locs.reduce((s,loc)=>s+locRevYs[loc][i],0));
