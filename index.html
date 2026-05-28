@@ -218,6 +218,7 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
   <!-- ══ FORECAST ══ -->
   <div id="tab-forecast" style="display:none">
     <div class="row g-2 mb-3" id="forecast-kpi-row"></div>
+    <div id="forecast-data-note" class="text-muted mb-2" style="font-size:.8rem;padding:0 2px"></div>
     <div class="row g-3">
       <div class="col-md-6"><div class="chart-card">
         <div class="section-title">Revenue Forecast — Next 8 Weeks</div>
@@ -273,11 +274,14 @@ async function loadData() {
     return false;
   }
   // Normalize location names to short form on every record
-  const LOC_NORM = {
-    'Fort Walton Beach':'FWB', 'Primo Dog - Fort Walton Beach':'FWB',
-    'Niceville':'NV',          'Primo Dog - Niceville':'NV',
+  // Keyword-based so any MoeGo format variation is handled correctly
+  const normLoc = s => {
+    if(!s) return 'Unknown';
+    const t = s.toLowerCase().trim();
+    if(t.includes('walton') || t==='fwb') return 'FWB';
+    if(t.includes('niceville') || t==='nv') return 'NV';
+    return s.trim();
   };
-  const normLoc = s => LOC_NORM[s] || s;
   ['payments','boarding','daycare','grooming'].forEach(sheet=>{
     (RAW[sheet]||[]).forEach(r=>{
       if(r.location) r.location = normLoc(r.location);
@@ -373,9 +377,12 @@ function buildRevKpis() {
 
   const row = document.getElementById('kpi-row');
   row.innerHTML = kpis.map(k => {
-    const chg=k.prev>0?((k.cur-k.prev)/k.prev*100):0;
-    const cls=chg>1?'up':chg<-1?'down':'flat';
-    const arrow=chg>1?'▲':chg<-1?'▼':'—';
+    const hasPrior = k.prev > 0;
+    const chg = hasPrior ? ((k.cur-k.prev)/k.prev*100) : 0;
+    const cls = hasPrior ? (chg>1?'up':chg<-1?'down':'flat') : 'flat';
+    const chgTxt = hasPrior
+      ? `${chg>1?'▲':chg<-1?'▼':'—'} ${fmtPct(chg)} vs prior period`
+      : '— no prior data';
     const pct=k.cur+k.prev>0?(k.cur/(k.cur+k.prev)*100):0;
 
     // Per-location breakdown
@@ -391,8 +398,8 @@ function buildRevKpis() {
     return `<div class="col-6 col-lg-3"><div class="kpi-card">
       <div class="kpi-label">${k.label}</div>
       <div class="kpi-value">${fmt$(k.cur)}</div>
-      <div class="kpi-sub ${cls}">${arrow} ${fmtPct(chg)} vs prior period</div>
-      <div class="kpi-sub text-muted">Prior: ${fmt$(k.prev)}</div>
+      <div class="kpi-sub ${cls}">${chgTxt}</div>
+      <div class="kpi-sub text-muted">Prior: ${hasPrior ? fmt$(k.prev) : '—'}</div>
       ${locHTML}
       <div class="kpi-bar"><div class="kpi-bar-fill" style="width:${Math.min(100,pct)}%;background:${k.color}"></div></div>
     </div></div>`;
@@ -961,16 +968,22 @@ function buildForecast() {
   }
   const ys=Array.from({length:wks},(_,i)=>locs.reduce((s,loc)=>s+locRevYs[loc][i],0));
 
-  // Trim leading zero-weeks from BOTH the display and regression
+  // Trim leading zero-weeks from display
   let firstNZ=ys.findIndex(v=>v>0); if(firstNZ<0) firstNZ=0;
   const dispWkLabels=wkLabels.slice(firstNZ);
   locs.forEach(loc=>{ locRevYs[loc]=locRevYs[loc].slice(firstNZ); });
   const dispYs=ys.slice(firstNZ);
-  const tYs=dispYs, tn=tYs.length;
-  const tXs=tYs.map((_,i)=>i);
-  const mx=tXs.reduce((a,b)=>a+b,0)/tn, my=tYs.reduce((a,b)=>a+b,0)/tn;
-  const slope=tXs.reduce((s,x,i)=>s+(x-mx)*(tYs[i]-my),0)/(tXs.reduce((s,x)=>s+(x-mx)**2,0)||1);
-  const ic=my-slope*mx;
+  const tn=dispYs.length;
+
+  // For regression, exclude the most recent week (W-1 = partial current week)
+  // so an in-progress week doesn't drag the trend line down to $0
+  const regYs = tn > 3 ? dispYs.slice(0, tn-1) : dispYs;
+  const regTn = regYs.length;
+  const regXs = regYs.map((_,i)=>i);
+  const mx = regXs.reduce((a,b)=>a+b,0)/regTn;
+  const my = regYs.reduce((a,b)=>a+b,0)/regTn;
+  const slope = regXs.reduce((s,x,i)=>s+(x-mx)*(regYs[i]-my),0)/(regXs.reduce((s,x)=>s+(x-mx)**2,0)||1);
+  const ic = my-slope*mx;
 
   const fwLabels=[], fwData=[];
   for(let i=0;i<8;i++){
@@ -1003,8 +1016,17 @@ function buildForecast() {
   });
 
   const tf=fwData.reduce((a,b)=>a+b,0);
-  const avg8=tYs.slice(-8).reduce((a,b)=>a+b,0)/Math.min(8,tn);
+  const avg8=regYs.slice(-8).reduce((a,b)=>a+b,0)/Math.min(8,regTn);
   const chg=avg8>0?(fwData[0]-avg8)/avg8*100:0;
+
+  // Data health diagnostic — show total payments and date range used
+  const allPmts=paymentsInPeriod(new Date(now.getFullYear()-2,now.getMonth(),now.getDate()),now);
+  const pmtDates=allPmts.map(p=>p.date).filter(Boolean).sort();
+  const pmtNote=allPmts.length===0
+    ? '<span class="text-danger fw-bold">⚠ No payment records found — check location names in export data</span>'
+    : `${allPmts.length.toLocaleString()} payment records · <b>${pmtDates[0]}</b> → <b>${pmtDates[pmtDates.length-1]}</b>`
+      + ` · W-1 (current partial week) excluded from trend regression`;
+  document.getElementById('forecast-data-note').innerHTML = pmtNote;
   document.getElementById('forecast-kpi-row').innerHTML=`
     <div class="col-6 col-lg-3"><div class="kpi-card">
       <div class="kpi-label">Next Week Projected</div>
