@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Primo Dog — Dashboard v28</title>
+<title>Primo Dog — Dashboard v29</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
@@ -243,6 +243,7 @@ Chart.defaults.plugins.datalabels.display = false; // off unless opted in per ch
 let RAW = null;
 const CHARTS = {};
 let ALL_LOCS = [];
+let LAST_DATA_DATE = null;   // set in loadData(); used as effective "now" for all calculations
 
 const LOC_PALETTE = ['#2d6a4f','#457b9d','#e76f51','#9b59b6','#f4a261','#1abc9c'];
 function locColor(loc) {
@@ -287,13 +288,26 @@ async function loadData() {
       if(r.location) r.location = normLoc(r.location);
     });
   });
+
+  // Compute the last payment date so all period calculations anchor to actual data,
+  // not to today (which may be weeks ahead of the latest export)
+  const allDates = [
+    ...RAW.payments.map(p=>p.date),
+    ...RAW.boarding.map(p=>p.start_date),
+    ...RAW.daycare.map(p=>p.date),
+    ...RAW.grooming.map(p=>p.date),
+  ].filter(Boolean).sort();
+  if(allDates.length) LAST_DATA_DATE = new Date(allDates[allDates.length-1]+'T12:00:00');
+
   return true;
 }
 
 // ═══════════════════════════════════════════════════════════
 // DATE / FORMAT HELPERS
 // ═══════════════════════════════════════════════════════════
-const today = () => new Date();
+// "today" anchors to the most recent data date, not the real calendar date.
+// This ensures periods/forecasts stay meaningful even when the export is weeks old.
+const today = () => LAST_DATA_DATE ? new Date(LAST_DATA_DATE) : new Date();
 function periodDates(p) {
   const now = today();
   const ago = n => { const x=new Date(now); x.setDate(x.getDate()-n); return x; };
@@ -785,27 +799,37 @@ function buildOccCharts() {
 function buildTopCustomers() {
   const {start,end}=periodDates(STATE.period);
   const svc=STATE.custSvc;
-  const payments=paymentsInPeriod(start,end);
+
+  // Build booking_id → client_name lookup from service records (more reliable names than payment records)
+  const bkLookup={};
+  [...RAW.boarding,...RAW.daycare,...RAW.grooming].forEach(r=>{
+    if(r.booking_id && r.client_name) bkLookup[r.booking_id]=r.client_name;
+  });
+
+  // Accumulate spend from payment records, enriching missing names from service lookup
   const custMap={};
-  payments.forEach(p=>{
+  paymentsInPeriod(start,end).forEach(p=>{
     if(svc!=='all'){
       const ct=careType(p).toLowerCase();
       if(svc==='boarding'&&ct!=='boarding') return;
       if(svc==='daycare'&&ct!=='daycare')   return;
       if(svc==='grooming'&&ct!=='grooming') return;
     }
-    const nm=p.client_name||'Unknown';
+    const nm = p.client_name || bkLookup[p.booking_id] || '';
+    if(!nm) return;  // skip truly anonymous transactions
     if(!custMap[nm]) custMap[nm]={name:nm,spend:0,visits:0,locs:new Set()};
     custMap[nm].spend+=p.amount; custMap[nm].visits+=1; custMap[nm].locs.add(p.location);
   });
   const sorted=Object.values(custMap).sort((a,b)=>b.spend-a.spend).slice(0,25);
-  document.querySelector('#tbl-top-cust tbody').innerHTML=sorted.map((c,i)=>`<tr>
-    <td>${i+1}</td><td><strong>${c.name}</strong></td>
-    <td><small>${[...c.locs].join(', ')}</small></td>
-    <td class="text-end">${c.visits}</td>
-    <td class="text-end"><strong>${fmt$(c.spend)}</strong></td>
-    <td class="text-end">${fmt$d(c.visits>0?c.spend/c.visits:0)}</td>
-  </tr>`).join('');
+  document.querySelector('#tbl-top-cust tbody').innerHTML=sorted.length
+    ? sorted.map((c,i)=>`<tr>
+        <td>${i+1}</td><td><strong>${c.name}</strong></td>
+        <td><small>${[...c.locs].join(', ')}</small></td>
+        <td class="text-end">${c.visits}</td>
+        <td class="text-end"><strong>${fmt$(c.spend)}</strong></td>
+        <td class="text-end">${fmt$d(c.visits>0?c.spend/c.visits:0)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="text-center text-muted py-3">No customer data for this period</td></tr>';
 }
 
 // ── At-risk exclusion list (localStorage) ────────────────────────────────────
@@ -1167,11 +1191,13 @@ function wireControls(){
 (async()=>{
   const ok=await loadData();
   if(!ok) return;
-  const maxPayDate = RAW.payments.reduce((mx,p)=>p.date&&p.date>mx?p.date:mx,'');
-  const asOfDate = maxPayDate ? new Date(maxPayDate+'T00:00:00') : (RAW.generated ? new Date(RAW.generated) : null);
-  if(asOfDate){
-    document.getElementById('generated-note').textContent=
-      `Data as of ${asOfDate.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+  if(LAST_DATA_DATE){
+    const dateStr = LAST_DATA_DATE.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    const staleDays = Math.floor((new Date()-LAST_DATA_DATE)/(1000*86400));
+    const staleNote = staleDays>7 ? ` · ${staleDays}d old` : '';
+    const el = document.getElementById('generated-note');
+    el.textContent = `Data as of ${dateStr}${staleNote}`;
+    if(staleDays>14) el.style.color='#e76f51';
   }
   buildLocChips();
   wireControls();
