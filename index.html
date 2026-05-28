@@ -199,7 +199,7 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
       </div></div>
       <div class="col-lg-5"><div class="chart-card">
         <div class="section-title">⚠️ At-Risk Customers</div>
-        <p class="text-muted" style="font-size:.78rem">2+ visits in days 45–90 ago, dropped ≥50% in the last 45 days.</p>
+        <p class="text-muted" style="font-size:.78rem">Customers absent for ≥2.5× their personal visit interval. Min 3 visits in 6 months, avg interval ≤30 days.</p>
         <div id="at-risk-list" style="max-height:380px;overflow-y:auto"></div>
       </div></div>
       <div class="col-12"><div class="chart-card">
@@ -394,20 +394,28 @@ function buildRevKpis() {
     </div></div>`;
   }).join('');
 
-  // ADR row
-  const gCount = groomingInPeriod(start,end).length;
-  const bNights = boardingInPeriod(start,end).reduce((s,r)=>s+Math.max(1,r.nights)*r.num_pets,0);
-  const dDogs   = daycareInPeriod(start,end).reduce((s,r)=>s+r.num_pets,0);
+  // ADR row — use service records directly so revenue and unit denominators come from the same source
+  const bRecs = boardingInPeriod(start,end).filter(r=>r.net_sales>0);
+  const dRecs = daycareInPeriod(start,end).filter(r=>r.net_sales>0);
+  const gRecs = groomingInPeriod(start,end).filter(r=>r.net_sales>0);
+
+  // Boarding: calculate actual nights from dates when the field is missing/zero
+  const bNights = bRecs.reduce((s,r)=>{
+    const n = r.nights>0 ? r.nights
+      : (r.end_date&&r.start_date ? Math.max(1,Math.round((new Date(r.end_date)-new Date(r.start_date))/86400000)) : 1);
+    return s + n * Math.max(1,r.num_pets);
+  },0);
+  const bRevD  = bRecs.reduce((s,r)=>s+r.net_sales,0);
+  const dDogs  = dRecs.reduce((s,r)=>s+Math.max(1,r.num_pets),0);
+  const dRevD  = dRecs.reduce((s,r)=>s+r.net_sales,0);
+  const gRevD  = gRecs.reduce((s,r)=>s+r.net_sales,0);
   const totalRev= sumAmt(curAll);
-  const gRev    = sumAmt(byType(curAll,'Grooming'));
-  const bRev    = sumAmt(byType(curAll,'Boarding'));
-  const dRev    = sumAmt(byType(curAll,'Daycare'));
 
   document.getElementById('adr-row').innerHTML = [
-    {label:'Overall Revenue / Day',    val: totalRev/days,         fmt: fmt$d, unit:'/day'},
-    {label:'Grooming / Appointment',   val: gCount?gRev/gCount:0,  fmt: fmt$d, unit:'/appt'},
-    {label:'Boarding / Pet Night',     val: bNights?bRev/bNights:0,fmt: fmt$d, unit:'/night'},
-    {label:'Daycare / Dog Visit',      val: dDogs?dRev/dDogs:0,    fmt: fmt$d, unit:'/visit'},
+    {label:'Overall Revenue / Day',  val: totalRev/days,             fmt: fmt$d, unit:'/day'},
+    {label:'Grooming / Appointment', val: gRecs.length?gRevD/gRecs.length:0, fmt: fmt$d, unit:'/appt'},
+    {label:'Boarding / Pet Night',   val: bNights?bRevD/bNights:0,   fmt: fmt$d, unit:'/night'},
+    {label:'Daycare / Dog Visit',    val: dDogs?dRevD/dDogs:0,       fmt: fmt$d, unit:'/visit'},
   ].map(a=>`<div class="col-6 col-md-3"><div class="adr-card">
     <div class="adr-label">${a.label}</div>
     <div class="adr-value">${a.fmt(a.val)}<small class="text-muted fw-normal" style="font-size:.72rem"> ${a.unit}</small></div>
@@ -420,32 +428,45 @@ function buildRevTimeChart() {
   const keyFn = gran==='week' ? weekKey : monthKey;
   const payments = paymentsInPeriod(start,end);
   const locs = activeLocs();
+  const types = ['Boarding','Daycare','Grooming'];
+  const svcColors = {Boarding:'#e76f51', Daycare:'#f4a261', Grooming:'#457b9d'};
+  // Two locations: first is full opacity, second is slightly transparent to visually distinguish
+  const locOpacity = ['ee','77'];
 
+  // Bucket by date → loc__type
   const buckets = {};
   payments.forEach(p=>{
     if(!p.date) return;
-    const k=keyFn(p.date);
-    if(!buckets[k]){ buckets[k]={}; locs.forEach(l=>{buckets[k][l]=0;}); }
-    buckets[k][p.location]=(buckets[k][p.location]||0)+p.amount;
+    const k = keyFn(p.date);
+    if(!buckets[k]) buckets[k]={};
+    const ck = `${p.location}__${careType(p)}`;
+    buckets[k][ck] = (buckets[k][ck]||0) + p.amount;
   });
-  const labels=Object.keys(buckets).sort();
-  const totals=labels.map(k=>locs.reduce((s,l)=>s+(buckets[k][l]||0),0));
+  const labels = Object.keys(buckets).sort();
+  const totals = labels.map(k => locs.reduce((s,loc)=>s+types.reduce((ts,t)=>ts+(buckets[k][`${loc}__${t}`]||0),0),0));
 
-  const datasets = locs.map(loc=>({
-    label:loc,
-    data:labels.map(k=>buckets[k][loc]||0),
-    backgroundColor:locColor(loc)+'cc',
-    borderColor:locColor(loc),
-    borderWidth:1,
-    stack:'s',
-  }));
+  // One dataset per loc+service (stack=loc so same location bars stack together, locations cluster)
+  const datasets = [];
+  locs.forEach((loc,li)=>{
+    types.forEach(type=>{
+      datasets.push({
+        label:`${loc} — ${type}`,
+        data: labels.map(k=>buckets[k][`${loc}__${type}`]||0),
+        backgroundColor: svcColors[type] + locOpacity[li] || svcColors[type]+'88',
+        stack: loc,
+      });
+    });
+  });
   datasets.push(trendDataset(totals,'#374151','Total trend'));
 
   destroyChart('chartRevTime');
   CHARTS.chartRevTime = new Chart(document.getElementById('chartRevTime'),{
     type:'bar', data:{labels,datasets},
     options:{responsive:true, maintainAspectRatio:false,
-      plugins:{legend:{position:'bottom'},datalabels:{display:false}},
+      plugins:{
+        legend:{position:'bottom', labels:{boxWidth:10, font:{size:10}}},
+        datalabels:{display:false}
+      },
       scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:v=>fmt$(v)}}}}
   });
 }
@@ -532,35 +553,36 @@ function buildComparisonChart() {
   const curP  = paymentsInPeriod(start,end);
   const prevP = paymentsInPeriod(priorStart,priorEnd);
 
-  // Sum across all selected locations
-  const curTotals  = types.map(t => curP.filter(p=>careType(p)===t).reduce((s,p)=>s+p.amount,0));
-  const prevTotals = types.map(t => prevP.filter(p=>careType(p)===t).reduce((s,p)=>s+p.amount,0));
+  // X-axis = locations; two clustered stacked bars per location (current | prior)
+  const datasets = [];
+  types.forEach(type=>{
+    datasets.push({
+      label:`Current — ${type}`,
+      data: locs.map(loc=>curP.filter(p=>p.location===loc&&careType(p)===type).reduce((s,p)=>s+p.amount,0)),
+      backgroundColor: colors[type]+'cc', borderColor: colors[type], borderWidth:1, stack:'current',
+    });
+    datasets.push({
+      label:`Prior — ${type}`,
+      data: locs.map(loc=>prevP.filter(p=>p.location===loc&&careType(p)===type).reduce((s,p)=>s+p.amount,0)),
+      backgroundColor: colors[type]+'44', borderColor: colors[type], borderWidth:1, stack:'prior',
+    });
+  });
 
   destroyChart('chartComparison');
   CHARTS.chartComparison = new Chart(document.getElementById('chartComparison'),{
     type:'bar',
-    data:{
-      labels: types,
-      datasets:[
-        {label:'Current',  data:curTotals,  backgroundColor: types.map(t=>colors[t]+'cc'), borderColor: types.map(t=>colors[t]), borderWidth:1},
-        {label:'Prior',    data:prevTotals, backgroundColor: types.map(t=>colors[t]+'44'), borderColor: types.map(t=>colors[t]), borderWidth:1, borderDash:[4,3]},
-      ]
-    },
+    data:{ labels:locs, datasets },
     options:{
       responsive:true, maintainAspectRatio:false,
+      layout:{padding:{top:18}},
       plugins:{
-        legend:{position:'bottom', labels:{boxWidth:12, font:{size:11}}},
-        datalabels:{
-          display: ctx => (ctx.dataset.data[ctx.dataIndex]??0) > 0,
-          anchor:'end', align:'top',
-          formatter: v => fmt$(v),
-          font:{size:9}, color:'#374151'
-        }
+        legend:{position:'bottom', labels:{boxWidth:10, font:{size:10}}},
+        datalabels:{display:false},
+        tooltip:{mode:'index'}
       },
-      layout:{padding:{top:22}},
       scales:{
-        x:{ticks:{font:{size:11}}},
-        y:{ticks:{callback:v=>fmt$(v), font:{size:11}}, beginAtZero:true}
+        x:{stacked:true, ticks:{font:{size:11}}},
+        y:{stacked:true, ticks:{callback:v=>fmt$(v), font:{size:11}}, beginAtZero:true}
       }
     }
   });
@@ -579,6 +601,9 @@ function buildOccKpis() {
   const pbNights= pb.reduce((s,r)=>s+r.nights*r.num_pets,0);
   const dTotal  = d.reduce((s,r)=>s+r.num_pets,0);
   const pdTotal = pd.reduce((s,r)=>s+r.num_pets,0);
+  // Use active daycare days (days with at least one record) to avoid Sunday/closed-day dilution
+  const dActiveDays  = new Set(d.map(r=>r.date)).size || 1;
+  const pdActiveDays = new Set(pd.map(r=>r.date)).size || 1;
 
   const kv = (cur,prev) => {
     if(prev<=0) return `<div class="kpi-sub flat">— no prior data</div>`;
@@ -589,8 +614,8 @@ function buildOccKpis() {
   const prevDisp = (raw,decimals=1) => raw<=0 ? '—' : raw.toFixed(decimals);
 
   document.getElementById('occ-kpi-row').innerHTML = [
-    {label:'Avg Daily Boarding Dogs', val:(bNights/days).toFixed(1),  prev:prevDisp(pbNights/days), color:'#e76f51', raw:bNights/days, praw:pbNights/days},
-    {label:'Avg Daily Daycare Dogs',  val:(dTotal/days).toFixed(1),   prev:prevDisp(pdTotal/days),  color:'#f4a261', raw:dTotal/days, praw:pdTotal/days},
+    {label:'Avg Daily Boarding Dogs', val:(bNights/days).toFixed(1),         prev:prevDisp(pbNights/days),          color:'#e76f51', raw:bNights/days,         praw:pbNights/days},
+    {label:'Avg Daycare Dogs/Day',    val:(dTotal/dActiveDays).toFixed(1),   prev:prevDisp(pdTotal/pdActiveDays),   color:'#f4a261', raw:dTotal/dActiveDays,   praw:pdTotal/pdActiveDays},
     {label:'Grooming Appointments',   val:g.length,                    prev:pg.length>0?pg.length:'—', color:'#457b9d', raw:g.length, praw:pg.length},
     {label:'Boarding Stays',          val:b.length,                    prev:pb.length>0?pb.length:'—', color:'#2d6a4f', raw:b.length, praw:pb.length},
   ].map(k=>`<div class="col-6 col-lg-3"><div class="kpi-card">
@@ -678,7 +703,8 @@ function buildOccCharts() {
   // Count how many times each weekday occurred in the selected period (for averaging)
   const dowOcc=Array(7).fill(0);
   for(let dd=new Date(start);dd<=end;dd.setDate(dd.getDate()+1)) dowOcc[dd.getDay()]++;
-  const dowAvg=(counts)=>counts.map((c,i)=>dowOcc[i]>0?Math.round(c/dowOcc[i]*10)/10:0);
+  // Return null (not 0) for days with no activity so Chart.js skips them entirely
+  const dowAvg=(counts)=>counts.map((c,i)=>(dowOcc[i]>0&&c>0)?Math.round(c/dowOcc[i]*10)/10:null);
 
   const svcDef = [
     {key:'Daycare',  records:d, dateField:'date',       valFn:r=>r.num_pets, color:'#f4a261'},
@@ -772,48 +798,75 @@ function buildTopCustomers() {
 }
 
 function buildAtRisk() {
+  // Statistical approach: each customer's PERSONAL visit interval is the baseline.
+  // Flag if they've been absent for ≥2.5× their normal interval.
+  // Only tracks customers who visited at least 3× in the last 6 months with avg interval ≤30 days.
   const now=today();
   const ago=n=>{const x=new Date(now);x.setDate(x.getDate()-n);return x;};
-  // Baseline: weeks 7–12 back (6-week window = ~42 days). Recent: last 6 weeks.
-  // This smooths out 1–2 week vacations. Flag only if baseline rate ≥2.5/wk AND recent rate ≤1/wk.
-  const recentStart=ago(42);   // 6 weeks ago
-  const baseStart  =ago(84);   // 12 weeks ago
-  const baseEnd    =ago(42);   // 6 weeks ago
+  const lookbackStart=ago(180); // 6-month history window
 
   const all=[
     ...filterLoc(RAW.boarding).map(r=>({name:r.client_name,date:r.start_date,loc:r.location})),
     ...filterLoc(RAW.daycare).map(r=>({name:r.client_name,date:r.date,loc:r.location})),
     ...filterLoc(RAW.grooming).map(r=>({name:r.client_name,date:r.date,loc:r.location})),
   ];
+
+  // Collect sorted visit dates per customer within the lookback window
   const cm={};
   all.forEach(v=>{
     if(!v.name||!v.date) return;
-    if(!cm[v.name]) cm[v.name]={name:v.name,loc:v.loc,recent:0,base:0};
     const vd=parseDate(v.date);
-    if(vd>=recentStart&&vd<=now) cm[v.name].recent++;
-    if(vd>=baseStart&&vd<baseEnd) cm[v.name].base++;
+    if(!vd||vd<lookbackStart||vd>now) return;
+    if(!cm[v.name]) cm[v.name]={name:v.name,loc:v.loc,dates:[]};
+    cm[v.name].dates.push(vd.getTime());
   });
 
-  const atRisk=Object.values(cm).filter(c=>{
-    const baseRate  = c.base   / 6;  // avg visits/week over 6-week baseline
-    const recentRate= c.recent / 6;  // avg visits/week over recent 6 weeks
-    return baseRate >= 2.5 && recentRate <= 1;
-  }).sort((a,b)=>(b.base/6)-(a.base/6)).slice(0,20);
+  const atRisk=[];
+  Object.values(cm).forEach(c=>{
+    const dates=c.dates.sort((a,b)=>a-b);
+    if(dates.length<3) return; // need ≥3 visits to establish a pattern
+
+    const lastVisit=new Date(dates[dates.length-1]);
+    const daysSinceLast=Math.round((now-lastVisit)/(1000*86400));
+
+    // Average interval = span between first and last visit / (n-1 gaps)
+    const spanDays=(dates[dates.length-1]-dates[0])/(1000*86400);
+    const avgInterval=spanDays/(dates.length-1);
+
+    // Only track regulars: avg visit interval ≤30 days
+    if(avgInterval>30||avgInterval<=0) return;
+
+    // Flag if gone ≥2.5× their normal interval
+    if(daysSinceLast>=2.5*avgInterval){
+      const freqLabel=avgInterval<=2?'Daily':avgInterval<=5?'Several/wk':avgInterval<=10?'~Weekly':avgInterval<=18?'Biweekly':'Every 3 wks';
+      atRisk.push({
+        name:c.name, loc:c.loc,
+        avgInterval:Math.round(avgInterval),
+        daysSinceLast,
+        overdueRatio:(daysSinceLast/avgInterval).toFixed(1),
+        lastVisit:lastVisit.toISOString().substring(0,10),
+        totalVisits:dates.length,
+        freqLabel,
+      });
+    }
+  });
+
+  // Sort by most overdue (ratio of absence to normal interval)
+  atRisk.sort((a,b)=>parseFloat(b.overdueRatio)-parseFloat(a.overdueRatio));
 
   const el=document.getElementById('at-risk-list');
-  if(!atRisk.length){el.innerHTML='<div class="text-muted" style="font-size:.85rem">No at-risk customers. 🎉</div>';return;}
-  el.innerHTML=atRisk.map(c=>{
-    const bRate=(c.base/6).toFixed(1), rRate=(c.recent/6).toFixed(1);
-    const drop=c.base>0?Math.round((1-(c.recent/c.base))*100):100;
-    return `<div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+  if(!atRisk.length){el.innerHTML='<div class="text-muted" style="font-size:.85rem">No at-risk customers in the last 6 months. 🎉</div>';return;}
+  el.innerHTML=atRisk.slice(0,20).map(c=>`
+    <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
       <div>
         <div class="fw-medium" style="font-size:.85rem">${c.name}</div>
-        <div class="text-muted" style="font-size:.75rem">${c.loc} · Baseline ${bRate}/wk → Recent ${rRate}/wk</div>
+        <div class="text-muted" style="font-size:.75rem">${c.loc} · ${c.freqLabel} (every ~${c.avgInterval}d avg) · ${c.totalVisits} visits in 6mo</div>
+        <div class="text-muted" style="font-size:.75rem">Last seen: ${c.lastVisit} · Gone ${c.daysSinceLast}d</div>
       </div>
-      <span class="risk-badge">−${drop}%</span>
-    </div>`;
-  }).join('');
+      <span class="risk-badge">${c.overdueRatio}× overdue</span>
+    </div>`).join('');
 }
+
 
 function buildCustomerSearch() {
   const input=document.getElementById('cust-search');
@@ -868,9 +921,12 @@ function buildForecast() {
   }
   const ys=Array.from({length:wks},(_,i)=>locs.reduce((s,loc)=>s+locRevYs[loc][i],0));
 
-  // Trim leading zero-weeks before regression so sparse history doesn't skew the line
+  // Trim leading zero-weeks from BOTH the display and regression
   let firstNZ=ys.findIndex(v=>v>0); if(firstNZ<0) firstNZ=0;
-  const tYs=ys.slice(firstNZ), tn=tYs.length;
+  const dispWkLabels=wkLabels.slice(firstNZ);
+  locs.forEach(loc=>{ locRevYs[loc]=locRevYs[loc].slice(firstNZ); });
+  const dispYs=ys.slice(firstNZ);
+  const tYs=dispYs, tn=tYs.length;
   const tXs=tYs.map((_,i)=>i);
   const mx=tXs.reduce((a,b)=>a+b,0)/tn, my=tYs.reduce((a,b)=>a+b,0)/tn;
   const slope=tXs.reduce((s,x,i)=>s+(x-mx)*(tYs[i]-my),0)/(tXs.reduce((s,x)=>s+(x-mx)**2,0)||1);
@@ -882,7 +938,7 @@ function buildForecast() {
     fwLabels.push(ws.toISOString().substring(5,10));
     fwData.push(Math.max(0,Math.round(ic+slope*(tn+i))));
   }
-  const allLabels=[...wkLabels,...fwLabels];
+  const allLabels=[...dispWkLabels,...fwLabels];
 
   // Per-location actual lines (no fill) + aggregate dashed forecast
   const revDatasets=locs.map(loc=>({
@@ -893,7 +949,7 @@ function buildForecast() {
   }));
   revDatasets.push({
     label:'Forecast (total)',
-    data:[...Array(wks).fill(null),ys[wks-1],...fwData],
+    data:[...Array(tn).fill(null),dispYs[tn-1],...fwData],
     borderColor:'#9ca3af', borderDash:[5,5], tension:.3,
     fill:false, pointStyle:'triangle', pointRadius:4, borderWidth:1.5,
   });
@@ -944,7 +1000,9 @@ function buildForecast() {
     });
   }
   const dys=Array.from({length:wks},(_,i)=>locs.reduce((s,loc)=>s+(locDYs[loc][i]||0),0));
-  let dfirst=dys.findIndex(v=>v>0); if(dfirst<0) dfirst=0;
+  // Trim daycare display to match revenue chart start (same allLabels)
+  let dfirst=Math.max(firstNZ, dys.findIndex(v=>v>0)); if(dfirst<0) dfirst=firstNZ;
+  locs.forEach(loc=>{ locDYs[loc]=locDYs[loc].slice(dfirst); });
   const dtYs=dys.slice(dfirst), dtn=dtYs.length;
   const dm=dtYs.reduce((a,b)=>a+b,0)/dtn;
   const dSlope=dtYs.reduce((s,y,i)=>s+(i-dtn/2)*(y-dm),0)/(dtYs.reduce((s,_,i)=>s+(i-dtn/2)**2,0)||1);
@@ -959,7 +1017,7 @@ function buildForecast() {
   }));
   occDatasets.push({
     label:'Forecast (total)',
-    data:[...Array(wks).fill(null),dys[wks-1],...dFw],
+    data:[...Array(dtn).fill(null),dtYs[dtn-1],...dFw],
     borderColor:'#9ca3af', borderDash:[5,5], tension:.3, fill:false,
   });
 
