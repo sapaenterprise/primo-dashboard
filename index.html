@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Primo Dog — Dashboard v29</title>
+<title>Primo Dog — Dashboard v30</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
@@ -112,6 +112,7 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
   <!-- ══ REVENUE ══ -->
   <div id="tab-revenue">
     <div class="row g-3 mb-2" id="kpi-row"></div>
+    <div id="rev-diag" class="text-muted mb-2" style="font-size:.78rem;padding:0 2px"></div>
     <div class="row g-2 mb-3" id="adr-row"></div>
     <div class="row g-3">
       <div class="col-lg-8">
@@ -181,7 +182,7 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
   <div id="tab-customers" style="display:none">
     <div class="row g-3">
       <div class="col-lg-7"><div class="chart-card">
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
           <div class="section-title mb-0">Top Customers by Spend</div>
           <select id="cust-svc" class="form-select form-select-sm" style="width:auto">
             <option value="all">All services</option>
@@ -190,6 +191,7 @@ select.period-select{border:1.5px solid #d1d5db;border-radius:8px;padding:.22rem
             <option value="grooming">Grooming</option>
           </select>
         </div>
+        <div id="cust-period-note" class="text-muted mb-2" style="font-size:.78rem"></div>
         <div class="table-responsive" style="max-height:400px;overflow-y:auto">
           <table class="table dash-table" id="tbl-top-cust">
             <thead><tr><th>#</th><th>Customer</th><th>Location(s)</th><th class="text-end">Visits</th><th class="text-end">Total Spend</th><th class="text-end">Avg/Visit</th></tr></thead>
@@ -445,6 +447,20 @@ function buildRevKpis() {
     <div class="adr-label">${a.label}</div>
     <div class="adr-value">${a.fmt(a.val)}<small class="text-muted fw-normal" style="font-size:.72rem"> ${a.unit}</small></div>
   </div></div>`).join('');
+
+  // Data diagnostic: show total payment records + per-location breakdown (incl. Unknown)
+  // This makes it immediately obvious if FWB records are being dropped or mislabeled
+  const allPos = RAW.payments.filter(p=>p.amount>0);
+  const byLoc = {};
+  allPos.forEach(p=>{ byLoc[p.location]=(byLoc[p.location]||0)+1; });
+  const locStr = Object.entries(byLoc).sort((a,b)=>b[1]-a[1])
+    .map(([l,n])=>`<b>${l}</b>: ${n.toLocaleString()}`).join(' · ');
+  const allDatesArr = allPos.map(p=>p.date).filter(Boolean).sort();
+  const dateRange = allDatesArr.length
+    ? `${allDatesArr[0]} → ${allDatesArr[allDatesArr.length-1]}`
+    : 'no dated records';
+  document.getElementById('rev-diag').innerHTML =
+    `All-time payment records: ${allPos.length.toLocaleString()} · ${dateRange} · by location: ${locStr}`;
 }
 
 function buildRevTimeChart() {
@@ -800,27 +816,30 @@ function buildTopCustomers() {
   const {start,end}=periodDates(STATE.period);
   const svc=STATE.custSvc;
 
-  // Build booking_id → client_name lookup from service records (more reliable names than payment records)
-  const bkLookup={};
-  [...RAW.boarding,...RAW.daycare,...RAW.grooming].forEach(r=>{
-    if(r.booking_id && r.client_name) bkLookup[r.booking_id]=r.client_name;
-  });
-
-  // Accumulate spend from payment records, enriching missing names from service lookup
+  // Use service records as primary source — they have reliable client names and appointment dates.
+  // Payment records often lack client_name for add-ons / multi-line invoices.
   const custMap={};
-  paymentsInPeriod(start,end).forEach(p=>{
-    if(svc!=='all'){
-      const ct=careType(p).toLowerCase();
-      if(svc==='boarding'&&ct!=='boarding') return;
-      if(svc==='daycare'&&ct!=='daycare')   return;
-      if(svc==='grooming'&&ct!=='grooming') return;
-    }
-    const nm = p.client_name || bkLookup[p.booking_id] || '';
-    if(!nm) return;  // skip truly anonymous transactions
-    if(!custMap[nm]) custMap[nm]={name:nm,spend:0,visits:0,locs:new Set()};
-    custMap[nm].spend+=p.amount; custMap[nm].visits+=1; custMap[nm].locs.add(p.location);
-  });
+  const addRecs=(recs, dateField, amtField)=>{
+    filterLoc(recs).filter(r=>inRange(r[dateField],start,end)&&(r[amtField]||0)>0).forEach(r=>{
+      const nm=(r.client_name||'').trim();
+      if(!nm) return;
+      if(!custMap[nm]) custMap[nm]={name:nm,spend:0,visits:0,locs:new Set()};
+      custMap[nm].spend+=r[amtField]||0;
+      custMap[nm].visits++;
+      custMap[nm].locs.add(r.location);
+    });
+  };
+  if(svc==='all'||svc==='boarding') addRecs(RAW.boarding,'start_date','net_sales');
+  if(svc==='all'||svc==='daycare')  addRecs(RAW.daycare,'date','net_sales');
+  if(svc==='all'||svc==='grooming') addRecs(RAW.grooming,'date','net_sales');
+
   const sorted=Object.values(custMap).sort((a,b)=>b.spend-a.spend).slice(0,25);
+
+  // Show period being displayed so the user can verify the filter is active
+  const periodLabel=`${start.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} → ${end.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+  const noteEl=document.getElementById('cust-period-note');
+  if(noteEl) noteEl.textContent=`${sorted.length} customers · ${periodLabel}`;
+
   document.querySelector('#tbl-top-cust tbody').innerHTML=sorted.length
     ? sorted.map((c,i)=>`<tr>
         <td>${i+1}</td><td><strong>${c.name}</strong></td>
@@ -1015,25 +1034,29 @@ function buildForecast() {
     fwLabels.push(ws.toISOString().substring(5,10));
     fwData.push(Math.max(0,Math.round(ic+slope*(tn+i))));
   }
-  const allLabels=[...dispWkLabels,...fwLabels];
 
-  // Per-location actual lines (no fill) + aggregate dashed forecast
+  // Chart: show only last 4 actual weeks so the projection is readable
+  // (regression still trained on all available weeks for accuracy)
+  const showWks = Math.min(4, tn);
+  const chartLabels = [...dispWkLabels.slice(-showWks), ...fwLabels];
+
+  // Per-location actual lines (last 4 weeks) + dashed aggregate forecast
   const revDatasets=locs.map(loc=>({
     label:loc,
-    data:[...locRevYs[loc],...Array(8).fill(null)],
+    data:[...locRevYs[loc].slice(-showWks),...Array(8).fill(null)],
     borderColor:locColor(loc), backgroundColor:'transparent',
-    tension:.3, fill:false, pointRadius:2, borderWidth:2,
+    tension:.3, fill:false, pointRadius:3, borderWidth:2,
   }));
   revDatasets.push({
     label:'Forecast (total)',
-    data:[...Array(tn).fill(null),dispYs[tn-1],...fwData],
+    data:[...Array(showWks-1).fill(null), dispYs[tn-1], ...fwData],
     borderColor:'#9ca3af', borderDash:[5,5], tension:.3,
     fill:false, pointStyle:'triangle', pointRadius:4, borderWidth:1.5,
   });
 
   destroyChart('chartForecast');
   CHARTS.chartForecast=new Chart(document.getElementById('chartForecast'),{
-    type:'line', data:{labels:allLabels, datasets:revDatasets},
+    type:'line', data:{labels:chartLabels, datasets:revDatasets},
     options:{responsive:true, maintainAspectRatio:false,
       plugins:{legend:{position:'bottom'},datalabels:{display:false}},
       scales:{y:{ticks:{callback:v=>fmt$(v)}}}}
@@ -1095,21 +1118,22 @@ function buildForecast() {
   const dIc=dm-dSlope*(dtn/2);
   const dFw=Array.from({length:8},(_,i)=>Math.max(0,Math.round(dIc+dSlope*(dtn+i))));
 
+  const dShowWks = Math.min(4, dtn);
   const occDatasets=locs.map(loc=>({
     label:loc,
-    data:[...locDYs[loc],...Array(8).fill(null)],
+    data:[...locDYs[loc].slice(-dShowWks),...Array(8).fill(null)],
     borderColor:locColor(loc), backgroundColor:'transparent',
-    fill:false, tension:.3, pointRadius:2, borderWidth:2,
+    fill:false, tension:.3, pointRadius:3, borderWidth:2,
   }));
   occDatasets.push({
     label:'Forecast (total)',
-    data:[...Array(dtn).fill(null),dtYs[dtn-1],...dFw],
+    data:[...Array(dShowWks-1).fill(null), dtYs[dtn-1], ...dFw],
     borderColor:'#9ca3af', borderDash:[5,5], tension:.3, fill:false,
   });
 
   destroyChart('chartForecastOcc');
   CHARTS.chartForecastOcc=new Chart(document.getElementById('chartForecastOcc'),{
-    type:'line', data:{labels:allLabels, datasets:occDatasets},
+    type:'line', data:{labels:chartLabels, datasets:occDatasets},
     options:{responsive:true, maintainAspectRatio:false,
       plugins:{legend:{position:'bottom'},datalabels:{display:false}},
       scales:{y:{beginAtZero:true}}}
