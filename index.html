@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Primo Dog — Dashboard v30</title>
+<title>Primo Dog — Dashboard v31</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
@@ -291,7 +291,22 @@ async function loadData() {
     });
   });
 
-  // Compute the last payment date so all period calculations anchor to actual data,
+  // Back-fill "Unknown" payment locations using booking_id.
+  // MoeGo's Payment Transactions report sometimes omits Business name even when
+  // the matching booking record (boarding/daycare/grooming) has it populated.
+  const bkLocMap = {};
+  ['boarding','daycare','grooming'].forEach(sheet=>{
+    (RAW[sheet]||[]).forEach(r=>{
+      if(r.booking_id && r.location && r.location !== 'Unknown')
+        bkLocMap[r.booking_id] = r.location;
+    });
+  });
+  (RAW.payments||[]).forEach(p=>{
+    if(p.location === 'Unknown' && p.booking_id && bkLocMap[p.booking_id])
+      p.location = bkLocMap[p.booking_id];
+  });
+
+  // Compute the last record date so all period calculations anchor to actual data,
   // not to today (which may be weeks ahead of the latest export)
   const allDates = [
     ...RAW.payments.map(p=>p.date),
@@ -998,7 +1013,7 @@ function buildForecast() {
   const wkLabels=[];
   for(let i=wks;i>=1;i--) wkLabels.push(`W-${i}`);
 
-  // Build per-location weekly revenue actuals
+  // Build per-location weekly revenue actuals (full 16-week arrays)
   const locRevYs={};
   locs.forEach(loc=>{ locRevYs[loc]=[]; });
   for(let i=wks;i>=1;i--){
@@ -1011,15 +1026,17 @@ function buildForecast() {
   }
   const ys=Array.from({length:wks},(_,i)=>locs.reduce((s,loc)=>s+locRevYs[loc][i],0));
 
-  // Trim leading zero-weeks from display
+  // Save full arrays BEFORE trimming — we'll use these for the chart display
+  const fullLocRevYs={};
+  locs.forEach(loc=>{ fullLocRevYs[loc]=[...locRevYs[loc]]; });
+  const fullYs=[...ys];
+
+  // Trim leading zero-weeks for regression only (improves trend quality)
   let firstNZ=ys.findIndex(v=>v>0); if(firstNZ<0) firstNZ=0;
-  const dispWkLabels=wkLabels.slice(firstNZ);
-  locs.forEach(loc=>{ locRevYs[loc]=locRevYs[loc].slice(firstNZ); });
   const dispYs=ys.slice(firstNZ);
   const tn=dispYs.length;
 
-  // For regression, exclude the most recent week (W-1 = partial current week)
-  // so an in-progress week doesn't drag the trend line down to $0
+  // Exclude most recent week (W-1 is often partial) from regression
   const regYs = tn > 3 ? dispYs.slice(0, tn-1) : dispYs;
   const regTn = regYs.length;
   const regXs = regYs.map((_,i)=>i);
@@ -1035,21 +1052,21 @@ function buildForecast() {
     fwData.push(Math.max(0,Math.round(ic+slope*(tn+i))));
   }
 
-  // Chart: show only last 4 actual weeks so the projection is readable
-  // (regression still trained on all available weeks for accuracy)
-  const showWks = Math.min(4, tn);
-  const chartLabels = [...dispWkLabels.slice(-showWks), ...fwLabels];
+  // Chart always shows last 4 actual weeks (W-4 → W-1) from the full arrays,
+  // regardless of how many leading-zero weeks were trimmed for regression
+  const chartLabels = [...wkLabels.slice(-4), ...fwLabels];
 
-  // Per-location actual lines (last 4 weeks) + dashed aggregate forecast
+  // Per-location actual lines (always 4 weeks) + dashed aggregate forecast
   const revDatasets=locs.map(loc=>({
     label:loc,
-    data:[...locRevYs[loc].slice(-showWks),...Array(8).fill(null)],
+    data:[...fullLocRevYs[loc].slice(-4),...Array(8).fill(null)],
     borderColor:locColor(loc), backgroundColor:'transparent',
     tension:.3, fill:false, pointRadius:3, borderWidth:2,
   }));
   revDatasets.push({
     label:'Forecast (total)',
-    data:[...Array(showWks-1).fill(null), dispYs[tn-1], ...fwData],
+    // anchor = last actual total (W-1), then 8 projected weeks
+    data:[null, null, null, fullYs[wks-1], ...fwData],
     borderColor:'#9ca3af', borderDash:[5,5], tension:.3,
     fill:false, pointStyle:'triangle', pointRadius:4, borderWidth:1.5,
   });
@@ -1109,25 +1126,28 @@ function buildForecast() {
     });
   }
   const dys=Array.from({length:wks},(_,i)=>locs.reduce((s,loc)=>s+(locDYs[loc][i]||0),0));
-  // Trim daycare display to match revenue chart start (same allLabels)
-  let dfirst=Math.max(firstNZ, dys.findIndex(v=>v>0)); if(dfirst<0) dfirst=firstNZ;
-  locs.forEach(loc=>{ locDYs[loc]=locDYs[loc].slice(dfirst); });
+  // Save full arrays before trimming for regression
+  const fullLocDYs={};
+  locs.forEach(loc=>{ fullLocDYs[loc]=[...locDYs[loc]]; });
+  const fullDys=[...dys];
+  // Trim for regression
+  let dfirst=dys.findIndex(v=>v>0); if(dfirst<0) dfirst=0;
   const dtYs=dys.slice(dfirst), dtn=dtYs.length;
-  const dm=dtYs.reduce((a,b)=>a+b,0)/dtn;
+  const dm=dtYs.reduce((a,b)=>a+b,0)/Math.max(1,dtn);
   const dSlope=dtYs.reduce((s,y,i)=>s+(i-dtn/2)*(y-dm),0)/(dtYs.reduce((s,_,i)=>s+(i-dtn/2)**2,0)||1);
   const dIc=dm-dSlope*(dtn/2);
   const dFw=Array.from({length:8},(_,i)=>Math.max(0,Math.round(dIc+dSlope*(dtn+i))));
 
-  const dShowWks = Math.min(4, dtn);
+  // Always show last 4 actual weeks from full arrays (same x-axis as revenue chart)
   const occDatasets=locs.map(loc=>({
     label:loc,
-    data:[...locDYs[loc].slice(-dShowWks),...Array(8).fill(null)],
+    data:[...fullLocDYs[loc].slice(-4),...Array(8).fill(null)],
     borderColor:locColor(loc), backgroundColor:'transparent',
     fill:false, tension:.3, pointRadius:3, borderWidth:2,
   }));
   occDatasets.push({
     label:'Forecast (total)',
-    data:[...Array(dShowWks-1).fill(null), dtYs[dtn-1], ...dFw],
+    data:[null, null, null, fullDys[wks-1], ...dFw],
     borderColor:'#9ca3af', borderDash:[5,5], tension:.3, fill:false,
   });
 
