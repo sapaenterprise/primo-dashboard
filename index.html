@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Primo Dog — Dashboard v31</title>
+<title>Primo Dog — Dashboard v32</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
@@ -400,10 +400,10 @@ function buildRevKpis() {
   const byType  = (arr,t) => arr.filter(p=>careType(p)===t);
 
   const kpis = [
-    {label:'Total Revenue',   cur:sumAmt(curAll),           prev:sumAmt(prevAll),           color:'#2d6a4f'},
-    {label:'Grooming Revenue',cur:sumAmt(byType(curAll,'Grooming')), prev:sumAmt(byType(prevAll,'Grooming')), color:'#457b9d'},
-    {label:'Boarding Revenue',cur:sumAmt(byType(curAll,'Boarding')), prev:sumAmt(byType(prevAll,'Boarding')), color:'#e76f51'},
-    {label:'Daycare Revenue', cur:sumAmt(byType(curAll,'Daycare')),  prev:sumAmt(byType(prevAll,'Daycare')),  color:'#f4a261'},
+    {label:'Total Revenue',   cur:sumAmt(curAll),           prev:sumAmt(prevAll),           color:'#2d6a4f', type:null},
+    {label:'Grooming Revenue',cur:sumAmt(byType(curAll,'Grooming')), prev:sumAmt(byType(prevAll,'Grooming')), color:'#457b9d', type:'Grooming'},
+    {label:'Boarding Revenue',cur:sumAmt(byType(curAll,'Boarding')), prev:sumAmt(byType(prevAll,'Boarding')), color:'#e76f51', type:'Boarding'},
+    {label:'Daycare Revenue', cur:sumAmt(byType(curAll,'Daycare')),  prev:sumAmt(byType(prevAll,'Daycare')),  color:'#f4a261', type:'Daycare'},
   ];
 
   const row = document.getElementById('kpi-row');
@@ -416,12 +416,13 @@ function buildRevKpis() {
       : '— no prior data';
     const pct=k.cur+k.prev>0?(k.cur/(k.cur+k.prev)*100):0;
 
-    // Per-location breakdown
+    // Per-location breakdown — filtered to this KPI's service type
     let locHTML = '';
     if(multiLoc) {
+      const locBase = k.type ? byType(curAll, k.type) : curAll;
       locHTML = `<div class="loc-breakdown">` +
         locs.map(loc=>{
-          const v=sumAmt(curAll.filter(p=>p.location===loc));
+          const v=sumAmt(locBase.filter(p=>p.location===loc));
           return `<span class="loc-pill" style="background:${locColor(loc)}22;color:${locColor(loc)}">${loc}: ${fmt$(v)}</span>`;
         }).join('') + `</div>`;
     }
